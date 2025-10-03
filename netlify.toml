@@ -3,6 +3,10 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# Matikan post-processing biar deploy tidak macet
+[build.processing]
+  skip_processing = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
