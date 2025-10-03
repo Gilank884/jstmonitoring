@@ -18,18 +18,18 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedAuth = localStorage.getItem("isAuthenticated");
+    const storedAuth = sessionStorage.getItem("isAuthenticated");
     setIsAuthenticated(storedAuth === "true");
     setLoading(false);
   }, []);
 
   const handleLogin = () => {
-    localStorage.setItem("isAuthenticated", "true");
+    sessionStorage.setItem("isAuthenticated", "true"); // ✅ pakai sessionStorage
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("isAuthenticated");
+    sessionStorage.removeItem("isAuthenticated");
     setIsAuthenticated(false);
   };
 

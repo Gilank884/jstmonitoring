@@ -14,6 +14,7 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
 
+    // Cari user di database
     const { data: user, error: fetchError } = await supabase
       .from("users")
       .select("*")
@@ -32,8 +33,9 @@ export default function Login({ onLogin }) {
       return;
     }
 
-    onLogin(user); 
-    navigate("/dashboard/recruitment-contract", { replace: true });
+    // ✅ Login sukses
+    onLogin(); // update state & localStorage lewat App.jsx
+    navigate("/", { replace: true });
     setLoading(false);
   };
 
@@ -42,7 +44,6 @@ export default function Login({ onLogin }) {
       {/* Left Section */}
       <div className="col-span-7 flex p-20 text-white">
         <div className="flex flex-col justify-between w-full">
-        
           <div>
             <h1 className="mt-40 my-8 text-6xl font-bold text-indigo-50 leading-tight">
               Enter your account and discover new experiences in Jagarti Sarana Telekomunikasi
@@ -76,9 +77,7 @@ export default function Login({ onLogin }) {
             </h2>
 
             {error && (
-              <p className="mb-4 rounded bg-red-100 px-3 py-2 text-red-600">
-                {error}
-              </p>
+              <p className="mb-4 rounded bg-red-100 px-3 py-2 text-red-600">{error}</p>
             )}
 
             {/* No ID */}
@@ -105,10 +104,7 @@ export default function Login({ onLogin }) {
                 <input type="checkbox" className="text-indigo-600" />
                 <span className="font-medium text-gray-600">Remember me</span>
               </label>
-              <a
-                href="#"
-                className="text-lg font-medium text-indigo-600 hover:underline"
-              >
+              <a href="#" className="text-lg font-medium text-indigo-600 hover:underline">
                 Forgot password?
               </a>
             </div>
@@ -128,9 +124,6 @@ export default function Login({ onLogin }) {
               <span className="mx-2 text-xs text-gray-400">OR</span>
               <span className="w-1/5 border-b border-gray-200 lg:w-1/4"></span>
             </div>
-
-            {/* Social Login */}
-            
 
             {/* Sign Up */}
             <p className="mt-12 text-center text-sm text-gray-500">
