@@ -10,33 +10,36 @@ export const handler = async (event) => {
   try {
     const path = event.queryStringParameters?.path;
     if (!path) {
-      return { statusCode: 400, body: JSON.stringify({ error: "Path is required" }) };
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Path is required" }),
+      };
     }
 
-    const { data, error } = await supabase.storage.from("workorder").download(path);
+    // generate signed URL (valid 1 menit)
+    const { data, error } = await supabase.storage
+      .from("workorder")
+      .createSignedUrl(path, 60);
+
     if (error || !data) {
-      return { statusCode: 404, body: JSON.stringify({ error: "File not found" }) };
+      return {
+        statusCode: 404,
+        body: JSON.stringify({ error: "File not found" }),
+      };
     }
 
-    const arrayBuffer = await data.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    let contentType = "application/octet-stream";
-    if (path.endsWith(".pdf")) contentType = "application/pdf";
-    if (path.endsWith(".jpg") || path.endsWith(".jpeg")) contentType = "image/jpeg";
-    if (path.endsWith(".png")) contentType = "image/png";
-
+    // redirect langsung ke Supabase signed URL
     return {
-      statusCode: 200,
+      statusCode: 302,
       headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `inline; filename="${path.split("/").pop()}"`,
+        Location: data.signedUrl,
       },
-      body: buffer.toString("base64"),
-      isBase64Encoded: true,
     };
   } catch (err) {
     console.error(err);
-    return { statusCode: 500, body: JSON.stringify({ error: "Internal server error" }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Internal server error" }),
+    };
   }
 };
