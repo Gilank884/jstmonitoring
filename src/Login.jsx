@@ -45,22 +45,18 @@ export default function Login({ onLogin }) {
       <div className="col-span-7 flex p-20 text-white">
         <div className="flex flex-col justify-between w-full">
           <div>
-            <h1 className="mt-40 my-8 text-6xl font-bold text-indigo-50 leading-tight">
+            <h1 className="mt-20 my-8 text-6xl font-bold text-indigo-50 leading-tight">
               Enter your account and discover new experiences in Jagarti Sarana Telekomunikasi
             </h1>
             <p className="mb-2 text-xl">You do not have an account?</p>
             <div className="flex items-center gap-x-6">
               <a
-                href="#"
+                href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="rounded-lg bg-violet-500 px-4 py-2 font-semibold text-white shadow-lg hover:opacity-90"
               >
                 Create New User
-              </a>
-              <a
-                href="#"
-                className="rounded-lg border border-violet-500 bg-white px-4 py-2 font-medium text-violet-800 hover:bg-gray-50"
-              >
-                Create Parent Login
               </a>
             </div>
           </div>
@@ -128,7 +124,12 @@ export default function Login({ onLogin }) {
             {/* Sign Up */}
             <p className="mt-12 text-center text-sm text-gray-500">
               Don’t have an account?{" "}
-              <a href="#" className="text-indigo-600 hover:underline">
+              <a
+                href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-600 hover:underline"
+              >
                 Sign up
               </a>
             </p>
