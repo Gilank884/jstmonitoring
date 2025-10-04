@@ -12,8 +12,10 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.58.0",
     "@tailwindcss/vite": "^4.1.13",
+    "animejs": "^4.2.0",
     "express": "^5.1.0",
     "file-saver": "^2.0.5",
+    "framer-motion": "^12.23.22",
     "jspdf": "^3.0.3",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",

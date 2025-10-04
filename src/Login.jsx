@@ -121,16 +121,15 @@ export default function Login({ onLogin }) {
               <span className="w-1/5 border-b border-gray-200 lg:w-1/4"></span>
             </div>
 
-            {/* Sign Up */}
+            {/* Download Application */}
             <p className="mt-12 text-center text-sm text-gray-500">
-              Don’t have an account?{" "}
+              Download The Application:{" "}
               <a
-                href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/app-release.apk"
+                download
                 className="text-indigo-600 hover:underline"
               >
-                Sign up
+                Click Here
               </a>
             </p>
           </div>
