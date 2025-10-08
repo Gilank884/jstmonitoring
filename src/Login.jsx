@@ -14,7 +14,7 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
 
-    // Cari user di database
+    // Cari user di database berdasarkan empl_no
     const { data: user, error: fetchError } = await supabase
       .from("users")
       .select("*")
@@ -33,8 +33,16 @@ export default function Login({ onLogin }) {
       return;
     }
 
-    // ✅ Login sukses
-    onLogin(); // update state & localStorage lewat App.jsx
+    // ✅ Login sukses → simpan data ke localStorage
+    localStorage.setItem("empl_no", user.empl_no);
+    localStorage.setItem("empl_name", user.empl_name || "User");
+    localStorage.setItem("role", user.role || "Karyawan");
+    localStorage.setItem("photo_url", user.photo_url || "/lank.jpg");
+
+    // Update state global kalau ada
+    if (onLogin) onLogin();
+
+    // Redirect ke dashboard/home
     navigate("/", { replace: true });
     setLoading(false);
   };
@@ -125,7 +133,7 @@ export default function Login({ onLogin }) {
             <p className="mt-12 text-center text-sm text-gray-500">
               Download The Application:{" "}
               <a
-                href="/app-release.apk"
+                href="/cctv.apk"
                 download
                 className="text-indigo-600 hover:underline"
               >
