@@ -133,7 +133,7 @@ export default function Login({ onLogin }) {
             <p className="mt-12 text-center text-sm text-gray-500">
               Download The Application:{" "}
               <a
-                href="/cctv.apk"
+                href="/cctv.v3.apk"
                 download
                 className="text-indigo-600 hover:underline"
               >
