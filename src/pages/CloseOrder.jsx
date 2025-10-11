@@ -14,8 +14,21 @@ export default function WorkOrder() {
   const [toDate, setToDate] = useState("");
 
   useEffect(() => {
-    handleRefresh();
+    // Default bulan ini
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+      .toISOString()
+      .split("T")[0];
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      .toISOString()
+      .split("T")[0];
+
+    setFromDate(firstDay);
+    setToDate(lastDay);
+
+    handleRefresh(firstDay, lastDay);
   }, []);
+
 
   async function fetchWorkOrders() {
     try {
@@ -35,6 +48,7 @@ export default function WorkOrder() {
       setLoading(false);
     }
   }
+  
 
   // ambil foto dari storage sebagai base64
   const fetchImageAsBase64 = async (path) => {
@@ -61,132 +75,128 @@ export default function WorkOrder() {
   };
 
   // generate PDF dan update link BA
-  const autoUpdatePDF = async (order) => {
-    try {
-      const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(14);
-      doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 105, 20, {
-        align: "center",
-      });
-      doc.setFontSize(8);
-      doc.text(
-        "Jl. Bhakti No.55C, RT.2/RW.7, Cilandak Tim., Ps. Minggu, Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta 12560",
-        105,
-        28,
-        { align: "center" }
-      );
-      doc.setLineWidth(0.5);
-      doc.line(20, 35, 190, 35);
+  // generate PDF dan update link BA
+const autoUpdatePDF = async (order) => {
+  try {
+    const doc = new jsPDF("landscape"); // 👈 default landscape
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 148, 20, { align: "center" });
+    doc.setFontSize(8);
+    doc.text(
+      "Jl. Bhakti No.55C, RT.2/RW.7, Cilandak Tim., Ps. Minggu, Kota Jakarta Selatan, DKI Jakarta 12560",
+      148,
+      28,
+      { align: "center" }
+    );
+    doc.setLineWidth(0.5);
+    doc.line(20, 35, 280, 35);
 
+    // --- Halaman 1: Data ---
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(11);
+
+    let startY = 50;
+    let leftX = 20;
+    let rightX = 150;
+    let lineHeight = 10;
+
+    // isi kiri
+    let yLeft = startY;
+    doc.text(`No SPK: ${order.no_spk || "-"}`, leftX, yLeft);
+    yLeft += lineHeight;
+    doc.text(
+      `Order Date: ${
+        order.created_at
+          ? new Date(order.created_at).toLocaleDateString()
+          : "-"
+      }`,
+      leftX,
+      yLeft
+    );
+    yLeft += lineHeight;
+    doc.text(`Lokasi: ${order.lokasi || "-"}`, leftX, yLeft);
+    yLeft += lineHeight;
+    doc.text(`Hardisk: ${order.hardisk || "-"}`, leftX, yLeft);
+    yLeft += lineHeight;
+    doc.text(`FPS: ${order.fps || "-"}`, leftX, yLeft);
+    yLeft += lineHeight;
+    doc.text(`DVR Condition: ${order.dvr_condition || "-"}`, leftX, yLeft);
+
+    // isi kanan
+    let yRight = startY;
+    doc.text(`Camera Condition: ${order.camera_condition || "-"}`, rightX, yRight);
+    yRight += lineHeight;
+    doc.text(`UPS: ${order.ups || "-"}`, rightX, yRight);
+    yRight += lineHeight;
+    doc.text(`Alarm: ${order.alarm || "-"}`, rightX, yRight);
+    yRight += lineHeight;
+    doc.text(`Panic Button: ${order.panic_button || "-"}`, rightX, yRight);
+    yRight += lineHeight;
+    doc.text(`Type: ${order.type || "-"}`, rightX, yRight);
+    yRight += lineHeight;
+    doc.text(`Status: ${order.status || "-"}`, rightX, yRight);
+
+    // --- Halaman 2: Dokumentasi ---
+    doc.addPage("a4", "landscape");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("Dokumentasi Pekerjaan", 148, 20, { align: "center" });
+
+    let x = 20;
+    let y = 40;
+    const imgWidth = 120;
+    const imgHeight = 80;
+
+    const fotoLabels = {
+      1: "FOTO MONITOR",
+      2: "FOTO HARDISK",
+      3: "FOTO LOKASI",
+      4: "FOTO LAYAR",
+    };
+
+    for (let i = 1; i <= 4; i++) {
+      const path = `workorder/${order.no_spk}/foto${i}.jpg`;
+      const base64 = await fetchImageAsBase64(path);
+
+      // label
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
+      doc.setFontSize(10);
+      doc.text(fotoLabels[i], x, y);
 
-      let startY = 45;
-      let leftX = 20;
-      let rightX = 110;
-      let lineHeight = 8;
-
-      // isi kiri
-      let yLeft = startY;
-      doc.text(`No SPK: ${order.no_spk || "-"}`, leftX, yLeft);
-      yLeft += lineHeight;
-      doc.text(
-        `Order Date: ${
-          order.created_at
-            ? new Date(order.created_at).toLocaleDateString()
-            : "-"
-        }`,
-        leftX,
-        yLeft
-      );
-      yLeft += lineHeight;
-      doc.text(`Lokasi: ${order.lokasi || "-"}`, leftX, yLeft);
-      yLeft += lineHeight;
-      doc.text(`Hardisk: ${order.hardisk || "-"}`, leftX, yLeft);
-      yLeft += lineHeight;
-      doc.text(`FPS: ${order.fps || "-"}`, leftX, yLeft);
-      yLeft += lineHeight;
-      doc.text(`DVR Condition: ${order.dvr_condition || "-"}`, leftX, yLeft);
-
-      // isi kanan
-      let yRight = startY;
-      doc.text(
-        `Camera Condition: ${order.camera_condition || "-"}`,
-        rightX,
-        yRight
-      );
-      yRight += lineHeight;
-      doc.text(`UPS: ${order.ups || "-"}`, rightX, yRight);
-      yRight += lineHeight;
-      doc.text(`Alarm: ${order.alarm || "-"}`, rightX, yRight);
-      yRight += lineHeight;
-      doc.text(`Panic Button: ${order.panic_button || "-"}`, rightX, yRight);
-      yRight += lineHeight;
-      doc.text(`Type: ${order.type || "-"}`, rightX, yRight);
-      yRight += lineHeight;
-      doc.text(`Status: ${order.status || "-"}`, rightX, yRight);
-
-      // posisi untuk dokumentasi
-      let y = Math.max(yLeft, yRight) + 15;
-
-      doc.setFont("helvetica", "bold");
-      doc.text("Dokumentasi:", 20, y);
-      y += 10;
-
-      doc.setFont("helvetica", "normal");
-      let x = 20;
-      const imgWidth = 80;
-      const imgHeight = 60;
-
-      const fotoLabels = {
-        1: "FOTO MONITOR",
-        2: "FOTO HARDISK",
-        3: "FOTO LOKASI",
-        4: "FOTO LAYAR",
-      };
-
-      for (let i = 1; i <= 4; i++) {
-        const path = `workorder/${order.no_spk}/foto${i}.jpg`;
-        const base64 = await fetchImageAsBase64(path);
-
-        // label di atas foto
-        doc.setFontSize(10);
-        doc.text(fotoLabels[i], x, y);
-        doc.setFontSize(11);
-
-        if (base64) {
-          doc.addImage(base64, "JPEG", x, y + 5, imgWidth, imgHeight);
-        } else {
-          doc.setFillColor(200, 200, 200);
-          doc.rect(x, y + 5, imgWidth, imgHeight, "F");
-        }
-
-        x += imgWidth + 10;
-        if (i % 2 === 0) {
-          x = 20;
-          y += imgHeight + 20;
-        }
+      if (base64) {
+        doc.addImage(base64, "JPEG", x, y + 5, imgWidth, imgHeight);
+      } else {
+        doc.setFillColor(220, 220, 220);
+        doc.rect(x, y + 5, imgWidth, imgHeight, "F");
       }
 
-      const pdfBlob = doc.output("blob");
-      const arrayBuffer = await pdfBlob.arrayBuffer();
-      const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, {
-        type: "application/pdf",
-      });
-      const filePath = `ba/${order.no_spk}.pdf`;
-
-      await supabase.storage
-        .from("workorder")
-        .upload(filePath, pdfFile, { upsert: true });
-
-      // pakai domain Netlify kamu
-      const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
-      await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
-    } catch (err) {
-      console.error("Gagal generate PDF:", err.message || err);
+      x += imgWidth + 20;
+      if (i % 2 === 0) {
+        x = 20;
+        y += imgHeight + 40;
+      }
     }
-  };
+
+    // --- Upload PDF ke Supabase ---
+    const pdfBlob = doc.output("blob");
+    const arrayBuffer = await pdfBlob.arrayBuffer();
+    const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, {
+      type: "application/pdf",
+    });
+    const filePath = `ba/${order.no_spk}.pdf`;
+
+    await supabase.storage
+      .from("workorder")
+      .upload(filePath, pdfFile, { upsert: true });
+
+    const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
+    await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
+  } catch (err) {
+    console.error("Gagal generate PDF:", err.message || err);
+  }
+};
+
 
   const handleRefresh = async () => {
     setRefreshing(true);

@@ -71,7 +71,7 @@ const Sidebar = () => {
 
       {/* Footer kecil */}
       <div className="p-4 border-t border-gray-700 text-xs text-gray-400">
-        {isOpen ? "© 2025 Lanktyo Team" : "©"}
+        {isOpen ? "© 2025 Jagarti Team" : "©"}
       </div>
     </div>
   );

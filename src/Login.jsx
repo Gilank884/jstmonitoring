@@ -14,7 +14,6 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
 
-    // Cari user di database berdasarkan empl_no
     const { data: user, error: fetchError } = await supabase
       .from("users")
       .select("*")
@@ -33,104 +32,95 @@ export default function Login({ onLogin }) {
       return;
     }
 
-    // ✅ Login sukses → simpan data ke localStorage
     localStorage.setItem("empl_no", user.empl_no);
     localStorage.setItem("empl_name", user.empl_name || "User");
     localStorage.setItem("role", user.role || "Karyawan");
     localStorage.setItem("photo_url", user.photo_url || "/lank.jpg");
 
-    // Update state global kalau ada
     if (onLogin) onLogin();
-
-    // Redirect ke dashboard/home
     navigate("/", { replace: true });
     setLoading(false);
   };
 
   return (
-    <div className="grid min-h-screen w-full grid-cols-12 overflow-hidden bg-[#422ED0]">
-      {/* Left Section */}
-      <div className="col-span-7 flex p-20 text-white">
-        <div className="flex flex-col justify-between w-full">
-          <div>
-            <h1 className="mt-20 my-8 text-6xl font-bold text-indigo-50 leading-tight">
-              Enter your account and discover new experiences in Jagarti Sarana Telekomunikasi
-            </h1>
-            <p className="mb-2 text-xl">You do not have an account?</p>
-            <div className="flex items-center gap-x-6">
-              <a
-                href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-lg bg-violet-500 px-4 py-2 font-semibold text-white shadow-lg hover:opacity-90"
-              >
-                Create New User
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div
+      className="relative min-h-screen w-full bg-cover bg-center"
+      style={{ backgroundImage: "url('/gambar.jpg')" }}
+    >
+      {/* Overlay biar teks lebih kontras */}
+      <div className="absolute inset-0 bg-black/50"></div>
 
-      {/* Right Section */}
-      <div className="relative col-span-5 flex rounded-tl-[44px] bg-white">
-        <div className="absolute top-4 right-0 -left-4 h-full w-full rounded-tl-[44px] bg-white/50"></div>
-        <div className="z-10 w-full">
-          <div className="mx-auto mt-20 max-w-md bg-white p-6 sm:p-10 lg:max-w-lg">
-            <h2 className="mb-10 text-4xl font-bold text-slate-600">
+      <div className="relative z-10 grid h-screen w-full grid-cols-12">
+        {/* LEFT SIDE */}
+        <div className="col-span-7 flex flex-col justify-center px-20 text-white">
+          <h1 className="mb-8 text-6xl font-bold leading-tight drop-shadow-xl">
+            Jagarti Sarana Telekomunikasi
+          </h1>
+          <p className="mb-6 text-2xl italic">Work fast. Live slow.</p>
+          <a
+            href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-fit rounded-lg bg-blue-500 px-6 py-3 font-semibold text-white shadow-lg hover:opacity-90"
+          >
+            Create New User
+          </a>
+        </div>
+
+        {/* RIGHT SIDE */}
+        <div className="col-span-5 flex items-center justify-center">
+          <div className="w-full max-w-md rounded-2xl bg-white/80 backdrop-blur-lg p-8 shadow-2xl">
+            <h2 className="mb-8 text-3xl font-bold text-gray-800">
               Hi, Welcome Back! 👋
             </h2>
 
             {error && (
-              <p className="mb-4 rounded bg-red-100 px-3 py-2 text-red-600">{error}</p>
+              <p className="mb-4 rounded bg-red-100 px-3 py-2 text-red-600">
+                {error}
+              </p>
             )}
 
-            {/* No ID */}
             <input
               type="text"
               placeholder="No ID"
               value={noID}
               onChange={(e) => setNoID(e.target.value)}
-              className="mb-6 w-full border-b border-gray-300 px-4 py-4 text-lg font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="mb-4 w-full rounded-md border border-gray-300 px-4 py-3 text-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
 
-            {/* Password */}
             <input
               type="password"
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mb-6 w-full border-b border-gray-300 px-4 py-4 text-lg font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              className="mb-4 w-full rounded-md border border-gray-300 px-4 py-3 text-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
 
-            {/* Remember Me + Forgot */}
-            <div className="mb-10 flex items-center justify-between">
+            <div className="mb-6 flex items-center justify-between text-sm text-gray-600">
               <label className="flex items-center space-x-2">
                 <input type="checkbox" className="text-indigo-600" />
-                <span className="font-medium text-gray-600">Remember me</span>
+                <span>Remember me</span>
               </label>
-              <a href="#" className="text-lg font-medium text-indigo-600 hover:underline">
+              <a href="https://wa.me/6282332901726?text=Hai%20Maaf%20Saya%20lupa%20password%20JST" className="text-indigo-600 hover:underline">
                 Forgot password?
               </a>
             </div>
 
-            {/* Login Button */}
             <button
               onClick={handleLogin}
               disabled={loading}
-              className="mb-6 w-full transform rounded-full bg-gradient-to-r from-blue-500 to-purple-500 px-8 py-4 font-bold text-white transition-transform hover:-translate-y-1 hover:shadow-lg disabled:opacity-60"
+              className="mb-6 w-full transform rounded-full bg-blue-500 px-8 py-4 font-bold text-white transition-transform hover:-translate-y-1 hover:shadow-lg disabled:opacity-60"
             >
               {loading ? "Loading..." : "Login"}
             </button>
 
-            {/* Or */}
             <div className="mb-6 flex items-center justify-center">
-              <span className="w-1/5 border-b border-gray-200 lg:w-1/4"></span>
-              <span className="mx-2 text-xs text-gray-400">OR</span>
-              <span className="w-1/5 border-b border-gray-200 lg:w-1/4"></span>
+              <span className="w-1/5 border-b border-gray-300"></span>
+              <span className="mx-2 text-xs text-gray-500">OR</span>
+              <span className="w-1/5 border-b border-gray-300"></span>
             </div>
 
-            {/* Download Application */}
-            <p className="mt-12 text-center text-sm text-gray-500">
+            <p className="text-center text-sm text-gray-600">
               Download The Application:{" "}
               <a
                 href="/cctv.v3.apk"
