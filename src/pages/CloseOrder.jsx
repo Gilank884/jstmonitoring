@@ -98,7 +98,7 @@ export default function WorkOrder() {
           "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, jam_problem, type, link_ba, status, created_at, jumlah_channel_dvr, jumlah_kamera, jam_mulai, jam_selesai, tanggal_problem, tanggal_mulai, tanggal_selesai",
           { count: "exact" }
         )
-        .eq("status", "OPEN")
+        .in("status", ["CLOSE", "PENDING"])
         .range(start, end)
         .order("created_at", { ascending: false });
 
@@ -536,7 +536,7 @@ export default function WorkOrder() {
     <div className="p-6 relative">
       <img src="/logo.png" alt="Logo" className="absolute top-4 left-4 w-20 h-auto" />
 
-      <h1 className="text-2xl font-bold mb-6 text-center">Open Data</h1>
+      <h1 className="text-2xl font-bold mb-6 text-center">Close Data</h1>
 
       <div className="flex flex-col md:flex-row items-center justify-between mb-4 gap-3">
         <div className="flex items-center border rounded-lg px-3 py-2 w-full md:w-1/3 bg-white shadow-sm">
