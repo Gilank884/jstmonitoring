@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 
 export default function Login({ onLogin }) {
-  const [noID, setNoID] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,42 +14,58 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
 
-    const { data: user, error: fetchError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("empl_no", noID)
-      .single();
-
-    if (fetchError || !user) {
-      setError("User tidak ditemukan");
+    // Validasi input
+    if (!email || !password) {
+      setError("Email dan password harus diisi");
       setLoading(false);
       return;
     }
 
-    if (user.password !== password) {
-      setError("Password salah");
+    try {
+      // Login pakai Supabase Auth
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({ email, password });
+
+      if (authError || !authData.user) {
+        setError("Email atau password salah");
+        setLoading(false);
+        return;
+      }
+
+      // Ambil data user dari tabel 'users'
+      const { data: userDetails, error: userError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", authData.user.email) // pakai email dari session login
+        .single();
+
+      if (userError) {
+        console.warn("Gagal ambil data user:", userError.message);
+      }
+
+      // Simpan info user di localStorage
+      localStorage.setItem("empl_no", userDetails?.empl_no || "");
+      localStorage.setItem("empl_name", userDetails?.empl_name || authData.user.email);
+      localStorage.setItem("role", userDetails?.role || "Karyawan");
+      localStorage.setItem("photo_url", userDetails?.photo_url || "/lank.jpg");
+
+      if (onLogin) onLogin();
+      navigate("/", { replace: true });
+
+    } catch (err) {
+      console.error(err);
+      setError("Terjadi kesalahan login");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    localStorage.setItem("empl_no", user.empl_no);
-    localStorage.setItem("empl_name", user.empl_name || "User");
-    localStorage.setItem("role", user.role || "Karyawan");
-    localStorage.setItem("photo_url", user.photo_url || "/lank.jpg");
-
-    if (onLogin) onLogin();
-    navigate("/", { replace: true });
-    setLoading(false);
   };
 
   return (
     <div
       className="relative min-h-screen w-full bg-cover bg-center"
-      style={{ backgroundImage: "url('/gambar.jpg')" }}
+      style={{ backgroundImage: "url('/kantor.jpeg')" }}
     >
-      {/* Overlay biar teks lebih kontras */}
       <div className="absolute inset-0 bg-black/50"></div>
-
       <div className="relative z-10 grid h-screen w-full grid-cols-12">
         {/* LEFT SIDE */}
         <div className="col-span-7 flex flex-col justify-center px-20 text-white">
@@ -81,10 +97,10 @@ export default function Login({ onLogin }) {
             )}
 
             <input
-              type="text"
-              placeholder="No ID"
-              value={noID}
-              onChange={(e) => setNoID(e.target.value)}
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="mb-4 w-full rounded-md border border-gray-300 px-4 py-3 text-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
 
@@ -101,7 +117,10 @@ export default function Login({ onLogin }) {
                 <input type="checkbox" className="text-indigo-600" />
                 <span>Remember me</span>
               </label>
-              <a href="https://wa.me/6282332901726?text=Hai%20Maaf%20Saya%20lupa%20password%20JST" className="text-indigo-600 hover:underline">
+              <a
+                href="https://wa.me/6282332901726?text=Hai%20Maaf%20Saya%20lupa%20password%20JST"
+                className="text-indigo-600 hover:underline"
+              >
                 Forgot password?
               </a>
             </div>
@@ -136,3 +155,5 @@ export default function Login({ onLogin }) {
     </div>
   );
 }
+
+

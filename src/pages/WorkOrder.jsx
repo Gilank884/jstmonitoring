@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 import { Search, SortAsc, SortDesc, RefreshCcw } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 
 export default function WorkOrder() {
+  // data + UI state
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -12,9 +13,16 @@ export default function WorkOrder() {
   const [refreshing, setRefreshing] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [emplNo, setEmplNo] = useState(null);
+  const [role, setRole] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
 
+  // pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  // --- init default date range to current month ---
   useEffect(() => {
-    // Default bulan ini
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
       .toISOString()
@@ -25,301 +33,390 @@ export default function WorkOrder() {
 
     setFromDate(firstDay);
     setToDate(lastDay);
-
-    handleRefresh(firstDay, lastDay);
   }, []);
 
-  async function fetchWorkOrders() {
+  // --- helper: safe totalPages ---
+  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (pageSize || 1)));
+
+  // --- fetch profile (empl_no & role) once on mount ---
+  useEffect(() => {
+    let mounted = true;
+    const fetchProfileAndFirstPage = async () => {
+      try {
+        setLoading(true);
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
+        if (userErr) throw userErr;
+        if (!user) {
+          console.warn("User belum login");
+          if (mounted) {
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("empl_no, role")
+          .eq("email", user.email)
+          .single();
+
+        if (profileError) throw profileError;
+
+        if (mounted) {
+          setEmplNo(profile?.empl_no ?? null);
+          setRole(profile?.role ?? null);
+          // call refresh for initial page (will wait for fromDate/toDate to be set by other effect if needed)
+        }
+      } catch (err) {
+        console.error("Init profile error:", err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    fetchProfileAndFirstPage();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // --- main data fetch (server-side pagination) ---
+ const handleRefresh = useCallback(
+  async (from = fromDate, to = toDate, _emplNo = emplNo, _role = role) => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const { data, error } = await supabase
+      // pagination
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize - 1;
+
+      let query = supabase
         .from("cctv")
         .select(
-          "id, no_spk, type_mesin, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, jam_problem, type, link_ba, status, created_at"
+          "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, jam_problem, type, link_ba, status, created_at, jumlah_channel_dvr, jumlah_kamera, jam_mulai, jam_selesai, tanggal_problem, tanggal_mulai, tanggal_selesai",
+          { count: "exact" }
         )
-        .eq("status", "OPEN"); // hanya ambil OPEN
+        .eq("status", "OPEN")
+        .range(start, end)
+        .order("created_at", { ascending: false });
 
+
+      // ✅ jika role bukan superadmin, tampilkan hanya data assigned_to = emplNo
+        if (_role?.toLowerCase() !== "superadmin") {
+          query = query.eq("assigned_to", _emplNo);
+        }
+
+
+      // filter tanggal
+      if (from) query = query.gte("created_at", new Date(from).toISOString());
+      if (to) {
+        const toEnd = new Date(to);
+        toEnd.setHours(23, 59, 59, 999);
+        query = query.lte("created_at", toEnd.toISOString());
+      }
+
+      const { data, count, error } = await query;
       if (error) throw error;
+
       setOrders(data || []);
+      setTotalCount(count ?? 0);
+
+      // ✅ Generate BA otomatis setelah data didapat
+      if (data && data.length > 0) {
+        for (const order of data) {
+          if (!order.link_ba) {
+            console.log("Generate BA otomatis untuk:", order.no_spk);
+            await autoUpdatePDF(order);
+          }
+        }
+      }
     } catch (err) {
-      console.error("Error fetching work orders:", err.message || err);
+      console.error("Error during refresh:", err);
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  }
+  },
+  [page, pageSize, fromDate, toDate, emplNo, role]
+);
 
-  
 
-  // fungsi load logo dari public
+  // call handleRefresh whenever important dependencies change
+  useEffect(() => {
+    // only fetch when we have emplNo (profile loaded)
+    if (emplNo === null && role === null) return;
+    // ensure from/to set
+    if (!fromDate || !toDate) return;
+    handleRefresh(fromDate, toDate, emplNo, role);
+  }, [handleRefresh, fromDate, toDate, emplNo, role, page, pageSize]);
+
+  // --- small helpers ---
+  const onChangePage = (newPage) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    setPage(newPage);
+    // handleRefresh will be triggered by useEffect watching `page`
+  };
+
+  const onChangePageSize = (newSize) => {
+    setPageSize(newSize);
+    setPage(1); // reset to first page on page size change
+  };
+
+  // --- load logo (public) ---
   async function getLogoBase64() {
-  try {
-    const res = await fetch("/logo.png");
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.warn("Gagal load logo:", err);
-    return null;
-  }
-}
-
-// fungsi baru → tambahkan ini
-async function fetchImageAsBase64(path) {
-  try {
-    const { data, error } = await supabase.storage.from("workorder").download(path);
-    if (error) {
-      console.warn("Gagal download gambar:", path, error.message);
+    try {
+      const res = await fetch("/logo.png");
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.warn("Gagal load logo:", err);
       return null;
     }
-    const blob = data;
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.error("fetchImageAsBase64 error:", err);
-    return null;
   }
-}
 
-
-
-
-// ===== FULL CLEAN autoUpdatePDF =====
-const autoUpdatePDF = async (order) => {
-  try {
-    const logoBase64 = await getLogoBase64();
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-
-    // ===== HEADER =====
-    if (logoBase64) doc.addImage(logoBase64, "PNG", 15, 2, 30, 25);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 148.5, 15, { align: "center" });
-    doc.setFontSize(12);
-    doc.text("LAPORAN KERJA", 148.5, 22, { align: "center" });
-
-    // ===== MAIN BOX =====
-    const marginX = 5;
-    let cursorY = 30;
-    doc.setLineWidth(0.5);
-    doc.rect(marginX, cursorY, 297 - marginX * 2, 175);
-
-    // ===== INFO HEADER (3 kolom) =====
-    const infoY = cursorY + 4;
-    doc.setFontSize(10);
-
-    // left col
-    doc.text(`No SPK: ${order.no_spk || "-"}`, marginX + 4, infoY + 6);
-    doc.text(
-      `Tanggal Problem: ${
-        order.created_at ? new Date(order.created_at).toLocaleDateString() : "-"
-      }`,
-      marginX + 4,
-      infoY + 12
-    );
-    doc.text(`Lokasi: ${order.lokasi || "-"}`, marginX + 4, infoY + 18);
-    doc.text(`Dilaporkan Oleh: ${order.dilaporkan_oleh || "-"}`, marginX + 4, infoY + 24);
-
-    // middle col
-    const midColX = 130;
-    doc.text(`Tanggal Problem: ${order.tanggal_problem || "-"}`, midColX, infoY + 6);
-    doc.text(`Tanggal Mulai: ${order.tanggal_mulai || "-"}`, midColX, infoY + 12);
-    doc.text(`Tanggal Selesai: ${order.tanggal_selesai || "-"}`, midColX, infoY + 18);
-
-    // right col
-    const sideColX = 180;
-    doc.text(`Jam Problem: ${order.jam_problem || "-"}`, sideColX, infoY + 6);
-    doc.text(`Jam Mulai: ${order.jam_mulai || "-"}`, sideColX, infoY + 12);
-    doc.text(`Jam Selesai: ${order.jam_selesai || "-"}`, sideColX, infoY + 18);
-
-    // ===== TABLE EQUIPMENT =====
-    const tableStartY = infoY + 30;
-    doc.line(marginX + 2, tableStartY - 2, 297 - marginX - 2, tableStartY - 2);
-
-    doc.setFont("helvetica", "bold");
-    const tableX = marginX + 2;
-    let tableY = tableStartY;
-    const colWidths = [8, 55, 55, 45, 45, 10, 10, 50];
-    const headers = ["No", "Type Mesin", "Serial Number", "Model", "Merk", "ST", "SC", "Status/Ket"];
-
-    let cx = tableX;
-    for (let i = 0; i < headers.length; i++) {
-      doc.rect(cx, tableY, colWidths[i], 8);
-      doc.text(headers[i], cx + 2, tableY + 6);
-      cx += colWidths[i];
+  // --- fetch image from Supabase storage as base64 ---
+  async function fetchImageAsBase64(path) {
+    try {
+      const { data, error } = await supabase.storage.from("workorder").download(path);
+      if (error) {
+        console.warn("Gagal download gambar:", path, error.message);
+        return null;
+      }
+      const blob = data;
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error("fetchImageAsBase64 error:", err);
+      return null;
     }
+  }
 
-    // data
-    doc.setFont("helvetica", "normal");
-    const dataRows = [
-      {
-        no: "1",
-        type_mesin: "Alarm",
-        serial_number: order.serial_alarm || "-",
-        model: order.model_alarm || "-",
-        merk: order.merk_alarm || "-",
-        st: order.st_alarm || "-",
-        sc: order.sc_alarm || "-",
-        status_keterangan: order.status_alarm || "-",
-      },
-      {
-        no: "2",
-        type_mesin: "Antrian",
-        serial_number: order.serial_antrian || "-",
-        model: order.model_antrian || "-",
-        merk: order.merk_antrian || "-",
-        st: order.st_antrian || "-",
-        sc: order.sc_antrian || "-",
-        status_keterangan: order.status_antrian || "-",
-      },
-    ];
+  // === autoUpdatePDF (tetap seperti versi kamu, hanya dipindah di sini) ===
+  const autoUpdatePDF = async (order) => {
+    try {
+      const logoBase64 = await getLogoBase64();
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 
-    tableY += 8;
-    for (const row of dataRows) {
-      cx = tableX;
-      for (let i = 0; i < colWidths.length; i++) {
+      // ===== HEADER =====
+      if (logoBase64) doc.addImage(logoBase64, "PNG", 15, 2, 30, 25);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 148.5, 15, { align: "center" });
+      doc.setFontSize(12);
+      doc.text("LAPORAN KERJA", 148.5, 22, { align: "center" });
+
+      // ===== MAIN BOX =====
+      const marginX = 5;
+      let cursorY = 30;
+      doc.setLineWidth(0.5);
+      doc.rect(marginX, cursorY, 297 - marginX * 2, 175);
+
+      // ===== INFO HEADER (3 kolom) =====
+      const infoY = cursorY + 4;
+      doc.setFontSize(10);
+
+      // left col
+      doc.text(`No SPK: ${order.no_spk || "-"}`, marginX + 4, infoY + 6);
+      doc.text(
+        `Tanggal Problem: ${
+          order.tanggal_problem ? new Date(order.tanggal_problem).toLocaleDateString() : "-"
+        }`,
+        marginX + 4,
+        infoY + 12
+      );
+      doc.text(`Lokasi: ${order.lokasi || "-"}`, marginX + 4, infoY + 18);
+      doc.text(`Dilaporkan Oleh: ${order.teknisi || "-"}`, marginX + 4, infoY + 24);
+
+      // middle col
+      const midColX = 130;
+      doc.text(`Tanggal Problem: ${order.tanggal_problem || "-"}`, midColX, infoY + 6);
+      doc.text(`Tanggal Mulai: ${order.tanggal_mulai || "-"}`, midColX, infoY + 12);
+      doc.text(`Tanggal Selesai: ${order.tanggal_selesai || "-"}`, midColX, infoY + 18);
+
+      // right col
+      const sideColX = 180;
+      doc.text(`Jam Problem: ${order.jam_problem || "-"}`, sideColX, infoY + 6);
+      doc.text(`Jam Mulai: ${order.jam_mulai || "-"}`, sideColX, infoY + 12);
+      doc.text(`Jam Selesai: ${order.jam_selesai || "-"}`, sideColX, infoY + 18);
+
+      // ===== TABLE EQUIPMENT =====
+      const tableStartY = infoY + 30;
+      doc.line(marginX + 2, tableStartY - 2, 297 - marginX - 2, tableStartY - 2);
+
+      doc.setFont("helvetica", "bold");
+      const tableX = marginX + 2;
+      let tableY = tableStartY;
+      const colWidths = [8, 55, 55, 45, 45, 10, 10, 50];
+      const headers = ["No", "Type Mesin", "Serial Number", "Model", "Merk", "ST", "SC", "Status/Ket"];
+
+      let cx = tableX;
+      for (let i = 0; i < headers.length; i++) {
         doc.rect(cx, tableY, colWidths[i], 8);
+        doc.text(headers[i], cx + 2, tableY + 6);
         cx += colWidths[i];
       }
 
-      doc.text(row.no, tableX + 2, tableY + 6);
-      doc.text(row.type_mesin, tableX + 10, tableY + 6);
-      doc.text(row.serial_number, tableX + 65, tableY + 6);
-      doc.text(row.model, tableX + 120, tableY + 6);
-      doc.text(row.merk, tableX + 165, tableY + 6);
-      doc.text(row.st, tableX + 210, tableY + 6);
-      doc.text(row.sc, tableX + 220, tableY + 6);
-      doc.text(row.status_keterangan, tableX + 235, tableY + 6);
+      // data
+      doc.setFont("helvetica", "normal");
+      const dataRows = [
+        {
+          no: "1",
+          type_mesin: "Alarm",
+          serial_number: order.serial_alarm || "-",
+          model: order.model_alarm || "-",
+          merk: order.merk_alarm || "-",
+          st: order.st_alarm || "-",
+          sc: order.sc_alarm || "-",
+          status_keterangan: order.status_alarm || "-",
+        },
+        {
+          no: "2",
+          type_mesin: "Antrian",
+          serial_number: order.serial_antrian || "-",
+          model: order.model_antrian || "-",
+          merk: order.merk_antrian || "-",
+          st: order.st_antrian || "-",
+          sc: order.sc_antrian || "-",
+          status_keterangan: order.status_antrian || "-",
+        },
+      ];
+
       tableY += 8;
-    }
+      for (const row of dataRows) {
+        cx = tableX;
+        for (let i = 0; i < colWidths.length; i++) {
+          doc.rect(cx, tableY, colWidths[i], 8);
+          cx += colWidths[i];
+        }
 
-    // ===== PERMASALAHAN =====
-    const pmY = tableY + 6;
-    const pmX = marginX + 2;
+        doc.text(row.no, tableX + 2, tableY + 6);
+        doc.text(row.type_mesin, tableX + 10, tableY + 6);
+        doc.text(row.serial_number, tableX + 65, tableY + 6);
+        doc.text(row.model, tableX + 120, tableY + 6);
+        doc.text(row.merk, tableX + 165, tableY + 6);
+        doc.text(row.st, tableX + 210, tableY + 6);
+        doc.text(row.sc, tableX + 220, tableY + 6);
+        doc.text(row.status_keterangan, tableX + 235, tableY + 6);
+        tableY += 8;
+      }
 
-    doc.setFont("helvetica", "bold");
-    doc.text("PERMASALAHAN:", pmX + 4, pmY);
-    doc.setFont("helvetica", "normal");
+      // ===== PERMASALAHAN =====
+      const pmY = tableY + 6;
+      const pmX = marginX + 2;
 
-    const pmTextStartY = pmY + 6;
-    const masalah =
-      order.permasalahan ||
-      `Backup Data / Cek Data CCTV (${order.lokasi || "-"})\nJumlah Channel DVR: ${
-        order.jumlah_channel_dvr || "-"
-      }\nJumlah Kamera: ${order.jumlah_kamera || "-"}`;
+      doc.setFont("helvetica", "bold");
+      doc.text("PERMASALAHAN:", pmX + 4, pmY);
+      doc.setFont("helvetica", "normal");
 
-    const pmLines = String(masalah).split("\n");
-    const pmBoxHeight = pmLines.length * 6 + 12;
+      const pmTextStartY = pmY + 6;
+      const masalah =
+        order.permasalahan ||
+        `Backup Data / Cek Data CCTV (${order.lokasi || "-"})\nJumlah Channel DVR: ${
+          order.jumlah_channel_dvr || "-"
+        }\nJumlah Kamera: ${order.jumlah_kamera || "-"}`;
 
-    doc.rect(pmX, pmY - 6, 130, pmBoxHeight);
-    pmLines.forEach((ln, idx) => doc.text(ln, pmX + 6, pmTextStartY + idx * 6));
+      const pmLines = String(masalah).split("\n");
+      const pmBoxHeight = pmLines.length * 6 + 12;
 
-    // ===== PENYELESAIAN =====
-    const penyY = pmY + pmBoxHeight + 2;
-    const penyX = pmX;
-    doc.setFont("helvetica", "bold");
-    doc.text("PENYELESAIAN:", penyX + 4, penyY);
-    doc.setFont("helvetica", "normal");
+      doc.rect(pmX, pmY - 6, 130, pmBoxHeight);
+      pmLines.forEach((ln, idx) => doc.text(ln, pmX + 6, pmTextStartY + idx * 6));
 
-    const penyTextStartY = penyY + 6;
-    const penyelesaian = order.penyelesaian || "Backup HDD Lama / Baru";
-    const lineHeight = 6;
-    const totalLines = 9;
-    const penyBoxHeight = totalLines * lineHeight + 14;
-    doc.rect(penyX, penyY - 6, 130, penyBoxHeight);
-    doc.text(penyelesaian, penyX + 6, penyTextStartY);
+      // ===== PENYELESAIAN =====
+      const penyY = pmY + pmBoxHeight + 2;
+      const penyX = pmX;
+      doc.setFont("helvetica", "bold");
+      doc.text("PENYELESAIAN:", penyX + 4, penyY);
+      doc.setFont("helvetica", "normal");
 
-    const rightColX = penyX + 70;
-    const dataPairs = [
-      { left: `SN HDD Lama: ${order.history_backup || "-"}`, right: `SN HDD Baru: ${order.firmware_dvr || "-"}` },
-      { left: `Kapasitas: ${order.sn_lama || "-"}`, right: `Kapasitas: ${order.sn_baru || "-"}` },
-      { left: `Sisa: ${order.sisa_lama || "-"}`, right: `Sisa: ${order.sisa_baru || "-"}` },
-      { left: `ST: ${order.st_lama || "-"}`, right: `ST: ${order.st_baru || "-"}` },
-    ];
+      const penyTextStartY = penyY + 6;
+      const penyelesaian = order.penyelesaian || "Backup HDD Lama / Baru";
+      const lineHeight = 6;
+      const totalLines = 9;
+      const penyBoxHeight = totalLines * lineHeight + 14;
+      doc.rect(penyX, penyY - 6, 130, penyBoxHeight);
+      doc.text(penyelesaian, penyX + 6, penyTextStartY);
 
-    dataPairs.forEach((pair, idx) => {
-      const y = penyTextStartY + (idx + 1) * lineHeight;
-      doc.text(pair.left, penyX + 6, y);
-      doc.text(pair.right, rightColX, y);
-    });
+      const rightColX = penyX + 70;
+      const dataPairs = [
+        { left: `SN HDD Lama: ${order.serial_lama || "-"}`, right: `SN HDD Baru: ${order.serial_baru || "-"}` },
+        { left: `Kapasitas: ${order.kapasitas_lama || "-"}`, right: `Kapasitas: ${order.kapasitas_baru || "-"}` },
+        { left: `Sisa: ${order.sisa_lama || "-"}`, right: `Sisa: ${order.sisa_baru || "-"}` },
+        { left: `ST: ${order.st_lama || "-"}`, right: `ST: ${order.st_baru || "-"}` },
+      ];
 
-    doc.setFont("helvetica", "bold");
-    doc.text("History Backup Data:", penyX + 4, penyTextStartY + (dataPairs.length + 1) * lineHeight + 2);
-    doc.setFont("helvetica", "normal");
+      dataPairs.forEach((pair, idx) => {
+        const y = penyTextStartY + (idx + 1) * lineHeight;
+        doc.text(pair.left, penyX + 6, y);
+        doc.text(pair.right, rightColX, y);
+      });
 
-    const historyY = penyTextStartY + (dataPairs.length + 2) * lineHeight;
-    const historyPairs = [
-      { left: `Mulai Tanggal: ${order.mulai_tanggal || "-"}`, right: `Mulai Jam: ${order.mulai_jam || "-"}` },
-      { left: `Sampai Tanggal: ${order.sampai_tanggal || "-"}`, right: `Sampai Jam: ${order.sampai_jam || "-"}` },
-      { left: `Tanggal Record: ${order.tanggal_record || "-"}`, right: `Jam Record: ${order.jam_record || "-"}` },
-      { left: `Firmware DVR: ${order.firmware_dvr || "-"}`, right: "" },
-    ];
+      doc.setFont("helvetica", "bold");
+      doc.text("History Backup Data:", penyX + 4, penyTextStartY + (dataPairs.length + 1) * lineHeight + 2);
+      doc.setFont("helvetica", "normal");
 
-    historyPairs.forEach((pair, idx) => {
-      const y = historyY + idx * lineHeight;
-      doc.text(pair.left, penyX + 6, y);
-      if (pair.right) doc.text(pair.right, rightColX, y);
-    });
+      const historyY = penyTextStartY + (dataPairs.length + 2) * lineHeight;
+      const historyPairs = [
+        { left: `Mulai Tanggal: ${order.mtrecord || "-"}`, right: `Mulai Jam: ${order.mjrecord || "-"}` },
+        { left: `Sampai Tanggal: ${order.strecord || "-"}`, right: `Sampai Jam: ${order.sjrecord || "-"}` },
+        { left: `Tanggal Record: ${order.tanggal_record || "-"}`, right: `Jam Record: ${order.jam_record || "-"}` },
+        { left: `Firmware DVR: ${order.firmware_dvr || "-"}`, right: "" },
+      ];
 
-    // ===== CATATAN PELANGGAN =====
-    const noteY = penyY + penyBoxHeight + 2;
-    const noteHeight = 13;
-    const noteWidth = 283;
-    doc.setFont("helvetica", "bold");
-    doc.text("CATATAN PELANGGAN:", penyX + 4, noteY);
-    doc.setFont("helvetica", "normal");
-    doc.rect(penyX, noteY - 6, noteWidth, noteHeight);
-    doc.text(order.catatan_pelanggan || "-", penyX + 6, noteY + 4, { maxWidth: noteWidth - 12 });
+      historyPairs.forEach((pair, idx) => {
+        const y = historyY + idx * lineHeight;
+        doc.text(pair.left, penyX + 6, y);
+        if (pair.right) doc.text(pair.right, rightColX, y);
+      });
 
-    // ===== TANDA TANGAN (fix posisi) =====
- const signH = 40;
-const signW = 130;
-const signGap = 0;
-let signY = noteY + noteHeight + - 115;
+      // ===== CATATAN PELANGGAN =====
+      const noteY = penyY + penyBoxHeight + 2;
+      const noteHeight = 13;
+      const noteWidth = 283;
+      doc.setFont("helvetica", "bold");
+      doc.text("CATATAN PELANGGAN:", penyX + 4, noteY);
+      doc.setFont("helvetica", "normal");
+      doc.rect(penyX, noteY - 6, noteWidth, noteHeight);
+      doc.text(order.catatan_pelanggan || "-", penyX + 6, noteY + 4, { maxWidth: noteWidth - 12 });
 
+      // ===== TANDA TANGAN (fix posisi) =====
+      const signH = 40;
+      const signW = 130;
+      const signGap = 0;
+      let signY = noteY + noteHeight + -115;
 
+      const signX = penyX + 145;
 
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.5);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
 
-const signX = penyX + 145;; // satu kolom posisi kiri
+      // Kotak PELANGGAN (atas)
+      doc.rect(signX, signY, signW, signH);
+      doc.text("Mengetahui Pelanggan", signX + signW / 2, signY + signH - 6, { align: "center" });
 
-doc.setDrawColor(0);
-doc.setLineWidth(0.5);
-doc.setFont("helvetica", "bold");
-doc.setFontSize(10);
+      // Kotak PT JAGARTI (bawah)
+      const jagartiY = signY + signH + signGap;
+      doc.rect(signX, jagartiY, signW, signH);
+      doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", signX + signW / 2, jagartiY + signH - 6, {
+        align: "center",
+      });
 
-// ===== Kotak PELANGGAN (atas) =====
-doc.rect(signX, signY, signW, signH);
-doc.text(
-  "Mengetahui Pelanggan",
-  signX + signW / 2,
-  signY + signH - 6,
-  { align: "center" }
-);
-
-// ===== Kotak PT JAGARTI (bawah) =====
-const jagartiY = signY + signH + signGap;
-doc.rect(signX, jagartiY, signW, signH);
-doc.text(
-  "PT. JAGARTI SARANA TELEKOMUNIKASI",
-  signX + signW / 2,
-  jagartiY + signH - 6,
-  { align: "center" }
-);
-
-
-      // --- PAGE 2: DOKUMENTASI (no header) ---
+      // --- PAGE 2: dokumentasi foto ---
       doc.addPage({ orientation: "landscape", unit: "mm", format: "a4" });
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
       doc.text("DOKUMENTASI PEKERJAAN", 148.5, 15, { align: "center" });
 
-      // Four-photo grid (2x2)
       const imgW = 135;
       const imgH = 90;
       const imgStartX = 10;
@@ -335,7 +432,6 @@ doc.text(
           try {
             doc.addImage(base64, "JPEG", imgX, imgY + 5, imgW, imgH);
           } catch (e) {
-            // fallback to placeholder rect if image add fails
             doc.setFillColor(230, 230, 230);
             doc.rect(imgX, imgY + 5, imgW, imgH, "F");
           }
@@ -344,7 +440,6 @@ doc.text(
           doc.rect(imgX, imgY + 5, imgW, imgH, "F");
         }
 
-        // next position
         if (i % 2 === 1) {
           imgX = imgStartX + imgW + 10;
         } else {
@@ -353,7 +448,7 @@ doc.text(
         }
       }
 
-      // --- Upload ke Supabase ---
+      // upload file to supabase storage
       const pdfBlob = doc.output("blob");
       const arrayBuffer = await pdfBlob.arrayBuffer();
       const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, {
@@ -361,26 +456,20 @@ doc.text(
       });
       const filePath = `ba/${order.no_spk}.pdf`;
 
-      // upload (upsert)
-      const { error: uploadErr } = await supabase.storage
-        .from("workorder")
-        .upload(filePath, pdfFile, { upsert: true });
+      const { error: uploadErr } = await supabase.storage.from("workorder").upload(filePath, pdfFile, {
+        upsert: true,
+      });
 
       if (uploadErr) {
         console.error("Upload PDF error:", uploadErr);
       } else {
-        // create public/signed link via your existing API (kept same as sebelumnya)
         const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
-        const { error: updateErr } = await supabase
-          .from("cctv")
-          .update({ link_ba: apiLink })
-          .eq("id", order.id);
+        const { error: updateErr } = await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
         if (updateErr) {
           console.error("Update link_ba error:", updateErr);
         }
       }
 
-      // (optional) return doc for preview if needed
       return true;
     } catch (err) {
       console.error("Gagal generate PDF:", err.message || err);
@@ -388,38 +477,11 @@ doc.text(
     }
   };
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      const { data, error } = await supabase
-        .from("cctv")
-        .select(
-          "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, jam_problem, type, link_ba, status, created_at, jumlah_channel_dvr, jumlah_kamera, model, jam_problem, jam_mulai, jam_selesai, tanggal_problem, tanggal_mulai, tanggal_selesai"
-        )
-        .eq("status", "OPEN"); // hanya ambil OPEN
-
-      if (error) throw error;
-      // generate untuk masing-masing order (heavy op)
-      await Promise.all((data || []).map((order) => autoUpdatePDF(order)));
-      await fetchWorkOrders();
-    } catch (err) {
-      console.error("Error during refresh:", err.message || err);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
+  // --- client-side filtered & sorted view (applies on current page set returned by server) ---
   const filteredOrders = orders.filter((o) => {
     const matchesSearch = o.lokasi?.toLowerCase().includes(search.toLowerCase());
-    const orderDate = o.created_at ? new Date(o.created_at) : null;
-    const from = fromDate ? new Date(fromDate) : null;
-    const to = toDate ? new Date(toDate) : null;
-
-    let matchesDate = true;
-    if (from && orderDate < from) matchesDate = false;
-    if (to && orderDate > to) matchesDate = false;
-
-    return matchesSearch && matchesDate;
+    // date filter already applied server-side by created_at when fetching; but we keep additional safety
+    return matchesSearch;
   });
 
   const sortedOrders = [...filteredOrders].sort((a, b) => {
@@ -489,37 +551,21 @@ doc.text(
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg"
-          />
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
           <span>-</span>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg"
-          />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
 
-          <button
-            onClick={() => setSortAsc(!sortAsc)}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition"
-          >
+          <button onClick={() => setSortAsc(!sortAsc)} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition">
             {sortAsc ? <SortAsc className="w-4 h-4 mr-2" /> : <SortDesc className="w-4 h-4 mr-2" />}
             Sort
           </button>
 
-          <button
-            onClick={exportToExcel}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition"
-          >
+          <button onClick={exportToExcel} className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition">
             Export Excel
           </button>
 
           <button
-            onClick={handleRefresh}
+            onClick={() => handleRefresh(fromDate, toDate, emplNo, role)}
             disabled={refreshing}
             className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg shadow hover:bg-orange-700 transition disabled:opacity-50"
           >
@@ -539,13 +585,6 @@ doc.text(
                 <th className="px-4 py-3">No SPK</th>
                 <th className="px-4 py-3">Order Date</th>
                 <th className="px-4 py-3">Lokasi</th>
-                <th className="px-4 py-3">Hardisk</th>
-                <th className="px-4 py-3">FPS</th>
-                <th className="px-4 py-3">DVR Condition</th>
-                <th className="px-4 py-3">Camera Condition</th>
-                <th className="px-4 py-3">UPS</th>
-                <th className="px-4 py-3">Alarm</th>
-                <th className="px-4 py-3">Panic Button</th>
                 <th className="px-4 py-3">Jam Problem</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Status</th>
@@ -563,36 +602,67 @@ doc.text(
                 sortedOrders.map((o, i) => (
                   <tr key={o.id ?? i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                     <td className="px-4 py-3 border-t">{o.no_spk}</td>
-                    <td className="px-4 py-3 border-t">
-                      {o.created_at ? new Date(o.created_at).toLocaleDateString() : "-"}
-                    </td>
+                    <td className="px-4 py-3 border-t">{o.created_at ? new Date(o.created_at).toLocaleDateString() : "-"}</td>
                     <td className="px-4 py-3 border-t">{o.lokasi}</td>
-                    <td className="px-4 py-3 border-t">{o.hardisk}</td>
-                    <td className="px-4 py-3 border-t">{o.fps}</td>
-                    <td className="px-4 py-3 border-t">{o.dvr_condition}</td>
-                    <td className="px-4 py-3 border-t">{o.camera_condition}</td>
-                    <td className="px-4 py-3 border-t">{o.ups}</td>
-                    <td className="px-4 py-3 border-t">{o.alarm}</td>
-                    <td className="px-4 py-3 border-t">{o.panic_button}</td>
                     <td className="px-4 py-3 border-t">{o.jam_problem}</td>
                     <td className="px-4 py-3 border-t">{getTypeBadge(o.type)}</td>
                     <td className="px-4 py-3 border-t">{getStatusBadge(o.status)}</td>
                     <td className="px-4 py-3 border-t text-blue-600 underline">
-                        {o.link_ba ? (
-                          <a href={o.link_ba} target="_blank" rel="noopener noreferrer">
-                            Lihat BA
-                          </a>
-                        ) : (
-                          "-"
-                        )}
-                      </td>
+                      {o.link_ba ? (
+                        <a href={o.link_ba} target="_blank" rel="noopener noreferrer">
+                          Lihat BA
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
+
+          {/* PAGINATION CONTROL */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-3 p-4">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onChangePage(page - 1)}
+                disabled={page <= 1}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg disabled:opacity-50"
+              >
+                Previous
+              </button>
+
+              <button
+                onClick={() => onChangePage(page + 1)}
+                disabled={page >= totalPages}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-600">
+                Page {page} of {totalPages} — {totalCount} items
+              </span>
+
+              <label className="text-sm text-gray-600">Per page:</label>
+              <select
+                value={pageSize}
+                onChange={(e) => onChangePageSize(Number(e.target.value))}
+                className="px-3 py-1 border rounded"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
+

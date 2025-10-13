@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Profile from "./pages/Profile.jsx";
 import WorkOrder from "./pages/WorkOrder.jsx";
 import CloseOrder from "./pages/CloseOrder.jsx";
+import RequestPage from "./pages/RequestPage.jsx"; // ✅ import RequestPage
 
 // ProtectedRoute wrapper
 function ProtectedRoute({ isAuthenticated }) {
@@ -24,7 +25,7 @@ export default function App() {
   }, []);
 
   const handleLogin = () => {
-    sessionStorage.setItem("isAuthenticated", "true"); // ✅ pakai sessionStorage
+    sessionStorage.setItem("isAuthenticated", "true");
     setIsAuthenticated(true);
   };
 
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="profile" element={<Profile />} />
             <Route path="workorder" element={<WorkOrder />} />
             <Route path="closeorder" element={<CloseOrder />} />
+            <Route path="request" element={<RequestPage />} /> {/* ✅ Tambahan */}
           </Route>
         </Route>
 

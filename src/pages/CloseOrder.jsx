@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "../supabaseClient";
 import { Search, SortAsc, SortDesc, RefreshCcw } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 
 export default function WorkOrder() {
+  // data + UI state
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -12,9 +13,16 @@ export default function WorkOrder() {
   const [refreshing, setRefreshing] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [emplNo, setEmplNo] = useState(null);
+  const [role, setRole] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
 
+  // pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  // --- init default date range to current month ---
   useEffect(() => {
-    // Default bulan ini
     const now = new Date();
     const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
       .toISOString()
@@ -25,212 +33,455 @@ export default function WorkOrder() {
 
     setFromDate(firstDay);
     setToDate(lastDay);
-
-    handleRefresh(firstDay, lastDay);
   }, []);
 
+  // --- helper: safe totalPages ---
+  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / (pageSize || 1)));
 
-  async function fetchWorkOrders() {
+  // --- fetch profile (empl_no & role) once on mount ---
+  useEffect(() => {
+    let mounted = true;
+    const fetchProfileAndFirstPage = async () => {
+      try {
+        setLoading(true);
+        const {
+          data: { user },
+          error: userErr,
+        } = await supabase.auth.getUser();
+        if (userErr) throw userErr;
+        if (!user) {
+          console.warn("User belum login");
+          if (mounted) {
+            setLoading(false);
+          }
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("empl_no, role")
+          .eq("email", user.email)
+          .single();
+
+        if (profileError) throw profileError;
+
+        if (mounted) {
+          setEmplNo(profile?.empl_no ?? null);
+          setRole(profile?.role ?? null);
+          // call refresh for initial page (will wait for fromDate/toDate to be set by other effect if needed)
+        }
+      } catch (err) {
+        console.error("Init profile error:", err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    fetchProfileAndFirstPage();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // --- main data fetch (server-side pagination) ---
+ const handleRefresh = useCallback(
+  async (from = fromDate, to = toDate, _emplNo = emplNo, _role = role) => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const { data, error } = await supabase
+      // pagination
+      const start = (page - 1) * pageSize;
+      const end = start + pageSize - 1;
+
+      let query = supabase
         .from("cctv")
         .select(
-          "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, type, link_ba, status, created_at"
+          "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, jam_problem, type, link_ba, status, created_at, jumlah_channel_dvr, jumlah_kamera, jam_mulai, jam_selesai, tanggal_problem, tanggal_mulai, tanggal_selesai",
+          { count: "exact" }
         )
-        .in("status", ["CLOSE", "PENDING"]);
+        .eq("status", "OPEN")
+        .range(start, end)
+        .order("created_at", { ascending: false });
 
+
+      // ✅ jika role bukan superadmin, tampilkan hanya data assigned_to = emplNo
+        if (_role?.toLowerCase() !== "superadmin") {
+          query = query.eq("assigned_to", _emplNo);
+        }
+
+
+      // filter tanggal
+      if (from) query = query.gte("created_at", new Date(from).toISOString());
+      if (to) {
+        const toEnd = new Date(to);
+        toEnd.setHours(23, 59, 59, 999);
+        query = query.lte("created_at", toEnd.toISOString());
+      }
+
+      const { data, count, error } = await query;
       if (error) throw error;
+
       setOrders(data || []);
+      setTotalCount(count ?? 0);
+
+      // ✅ Generate BA otomatis setelah data didapat
+      if (data && data.length > 0) {
+        for (const order of data) {
+          if (!order.link_ba) {
+            console.log("Generate BA otomatis untuk:", order.no_spk);
+            await autoUpdatePDF(order);
+          }
+        }
+      }
     } catch (err) {
-      console.error("Error fetching work orders:", err.message || err);
+      console.error("Error during refresh:", err);
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  }
-  
+  },
+  [page, pageSize, fromDate, toDate, emplNo, role]
+);
 
-  // ambil foto dari storage sebagai base64
-  const fetchImageAsBase64 = async (path) => {
+
+  // call handleRefresh whenever important dependencies change
+  useEffect(() => {
+    // only fetch when we have emplNo (profile loaded)
+    if (emplNo === null && role === null) return;
+    // ensure from/to set
+    if (!fromDate || !toDate) return;
+    handleRefresh(fromDate, toDate, emplNo, role);
+  }, [handleRefresh, fromDate, toDate, emplNo, role, page, pageSize]);
+
+  // --- small helpers ---
+  const onChangePage = (newPage) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    setPage(newPage);
+    // handleRefresh will be triggered by useEffect watching `page`
+  };
+
+  const onChangePageSize = (newSize) => {
+    setPageSize(newSize);
+    setPage(1); // reset to first page on page size change
+  };
+
+  // --- load logo (public) ---
+  async function getLogoBase64() {
     try {
-      const { data: urlData, error } = await supabase.storage
-        .from("workorder")
-        .createSignedUrl(path, 60);
-      if (error) throw error;
-
-      const url = urlData.signedUrl;
-      const res = await fetch(url, { cache: "no-cache" });
-      if (!res.ok) throw new Error("Gagal fetch gambar");
+      const res = await fetch("/logo.png");
+      if (!res.ok) return null;
       const blob = await res.blob();
-
       return await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
         reader.readAsDataURL(blob);
       });
-    } catch (e) {
-      console.warn("Gagal load gambar:", path, e.message);
+    } catch (err) {
+      console.warn("Gagal load logo:", err);
       return null;
     }
-  };
-
-  // generate PDF dan update link BA
-  // generate PDF dan update link BA
-const autoUpdatePDF = async (order) => {
-  try {
-    const doc = new jsPDF("landscape"); // 👈 default landscape
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 148, 20, { align: "center" });
-    doc.setFontSize(8);
-    doc.text(
-      "Jl. Bhakti No.55C, RT.2/RW.7, Cilandak Tim., Ps. Minggu, Kota Jakarta Selatan, DKI Jakarta 12560",
-      148,
-      28,
-      { align: "center" }
-    );
-    doc.setLineWidth(0.5);
-    doc.line(20, 35, 280, 35);
-
-    // --- Halaman 1: Data ---
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(11);
-
-    let startY = 50;
-    let leftX = 20;
-    let rightX = 150;
-    let lineHeight = 10;
-
-    // isi kiri
-    let yLeft = startY;
-    doc.text(`No SPK: ${order.no_spk || "-"}`, leftX, yLeft);
-    yLeft += lineHeight;
-    doc.text(
-      `Order Date: ${
-        order.created_at
-          ? new Date(order.created_at).toLocaleDateString()
-          : "-"
-      }`,
-      leftX,
-      yLeft
-    );
-    yLeft += lineHeight;
-    doc.text(`Lokasi: ${order.lokasi || "-"}`, leftX, yLeft);
-    yLeft += lineHeight;
-    doc.text(`Hardisk: ${order.hardisk || "-"}`, leftX, yLeft);
-    yLeft += lineHeight;
-    doc.text(`FPS: ${order.fps || "-"}`, leftX, yLeft);
-    yLeft += lineHeight;
-    doc.text(`DVR Condition: ${order.dvr_condition || "-"}`, leftX, yLeft);
-
-    // isi kanan
-    let yRight = startY;
-    doc.text(`Camera Condition: ${order.camera_condition || "-"}`, rightX, yRight);
-    yRight += lineHeight;
-    doc.text(`UPS: ${order.ups || "-"}`, rightX, yRight);
-    yRight += lineHeight;
-    doc.text(`Alarm: ${order.alarm || "-"}`, rightX, yRight);
-    yRight += lineHeight;
-    doc.text(`Panic Button: ${order.panic_button || "-"}`, rightX, yRight);
-    yRight += lineHeight;
-    doc.text(`Type: ${order.type || "-"}`, rightX, yRight);
-    yRight += lineHeight;
-    doc.text(`Status: ${order.status || "-"}`, rightX, yRight);
-
-    // --- Halaman 2: Dokumentasi ---
-    doc.addPage("a4", "landscape");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("Dokumentasi Pekerjaan", 148, 20, { align: "center" });
-
-    let x = 20;
-    let y = 40;
-    const imgWidth = 120;
-    const imgHeight = 80;
-
-    const fotoLabels = {
-      1: "FOTO MONITOR",
-      2: "FOTO HARDISK",
-      3: "FOTO LOKASI",
-      4: "FOTO LAYAR",
-    };
-
-    for (let i = 1; i <= 4; i++) {
-      const path = `workorder/${order.no_spk}/foto${i}.jpg`;
-      const base64 = await fetchImageAsBase64(path);
-
-      // label
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text(fotoLabels[i], x, y);
-
-      if (base64) {
-        doc.addImage(base64, "JPEG", x, y + 5, imgWidth, imgHeight);
-      } else {
-        doc.setFillColor(220, 220, 220);
-        doc.rect(x, y + 5, imgWidth, imgHeight, "F");
-      }
-
-      x += imgWidth + 20;
-      if (i % 2 === 0) {
-        x = 20;
-        y += imgHeight + 40;
-      }
-    }
-
-    // --- Upload PDF ke Supabase ---
-    const pdfBlob = doc.output("blob");
-    const arrayBuffer = await pdfBlob.arrayBuffer();
-    const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, {
-      type: "application/pdf",
-    });
-    const filePath = `ba/${order.no_spk}.pdf`;
-
-    await supabase.storage
-      .from("workorder")
-      .upload(filePath, pdfFile, { upsert: true });
-
-    const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
-    await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
-  } catch (err) {
-    console.error("Gagal generate PDF:", err.message || err);
   }
-};
 
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
+  // --- fetch image from Supabase storage as base64 ---
+  async function fetchImageAsBase64(path) {
     try {
-      const { data, error } = await supabase
-        .from("cctv")
-        .select(
-          "id, no_spk, lokasi, hardisk, fps, dvr_condition, camera_condition, ups, alarm, panic_button, type, link_ba, status, created_at"
-        )
-        .in("status", ["CLOSE", "PENDING"]);
-      if (error) throw error;
-
-      await Promise.all(data.map((order) => autoUpdatePDF(order)));
-      await fetchWorkOrders();
+      const { data, error } = await supabase.storage.from("workorder").download(path);
+      if (error) {
+        console.warn("Gagal download gambar:", path, error.message);
+        return null;
+      }
+      const blob = data;
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
     } catch (err) {
-      console.error("Error during refresh:", err.message || err);
-    } finally {
-      setRefreshing(false);
+      console.error("fetchImageAsBase64 error:", err);
+      return null;
+    }
+  }
+
+  // === autoUpdatePDF (tetap seperti versi kamu, hanya dipindah di sini) ===
+  const autoUpdatePDF = async (order) => {
+    try {
+      const logoBase64 = await getLogoBase64();
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+      // ===== HEADER =====
+      if (logoBase64) doc.addImage(logoBase64, "PNG", 15, 2, 30, 25);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", 148.5, 15, { align: "center" });
+      doc.setFontSize(12);
+      doc.text("LAPORAN KERJA", 148.5, 22, { align: "center" });
+
+      // ===== MAIN BOX =====
+      const marginX = 5;
+      let cursorY = 30;
+      doc.setLineWidth(0.5);
+      doc.rect(marginX, cursorY, 297 - marginX * 2, 175);
+
+      // ===== INFO HEADER (3 kolom) =====
+      const infoY = cursorY + 4;
+      doc.setFontSize(10);
+
+      // left col
+      doc.text(`No SPK: ${order.no_spk || "-"}`, marginX + 4, infoY + 6);
+      doc.text(
+        `Tanggal Problem: ${
+          order.tanggal_problem ? new Date(order.tanggal_problem).toLocaleDateString() : "-"
+        }`,
+        marginX + 4,
+        infoY + 12
+      );
+      doc.text(`Lokasi: ${order.lokasi || "-"}`, marginX + 4, infoY + 18);
+      doc.text(`Dilaporkan Oleh: ${order.teknisi || "-"}`, marginX + 4, infoY + 24);
+
+      // middle col
+      const midColX = 130;
+      doc.text(`Tanggal Problem: ${order.tanggal_problem || "-"}`, midColX, infoY + 6);
+      doc.text(`Tanggal Mulai: ${order.tanggal_mulai || "-"}`, midColX, infoY + 12);
+      doc.text(`Tanggal Selesai: ${order.tanggal_selesai || "-"}`, midColX, infoY + 18);
+
+      // right col
+      const sideColX = 180;
+      doc.text(`Jam Problem: ${order.jam_problem || "-"}`, sideColX, infoY + 6);
+      doc.text(`Jam Mulai: ${order.jam_mulai || "-"}`, sideColX, infoY + 12);
+      doc.text(`Jam Selesai: ${order.jam_selesai || "-"}`, sideColX, infoY + 18);
+
+      // ===== TABLE EQUIPMENT =====
+      const tableStartY = infoY + 30;
+      doc.line(marginX + 2, tableStartY - 2, 297 - marginX - 2, tableStartY - 2);
+
+      doc.setFont("helvetica", "bold");
+      const tableX = marginX + 2;
+      let tableY = tableStartY;
+      const colWidths = [8, 55, 55, 45, 45, 10, 10, 50];
+      const headers = ["No", "Type Mesin", "Serial Number", "Model", "Merk", "ST", "SC", "Status/Ket"];
+
+      let cx = tableX;
+      for (let i = 0; i < headers.length; i++) {
+        doc.rect(cx, tableY, colWidths[i], 8);
+        doc.text(headers[i], cx + 2, tableY + 6);
+        cx += colWidths[i];
+      }
+
+      // data
+      doc.setFont("helvetica", "normal");
+      const dataRows = [
+        {
+          no: "1",
+          type_mesin: "Alarm",
+          serial_number: order.serial_alarm || "-",
+          model: order.model_alarm || "-",
+          merk: order.merk_alarm || "-",
+          st: order.st_alarm || "-",
+          sc: order.sc_alarm || "-",
+          status_keterangan: order.status_alarm || "-",
+        },
+        {
+          no: "2",
+          type_mesin: "Antrian",
+          serial_number: order.serial_antrian || "-",
+          model: order.model_antrian || "-",
+          merk: order.merk_antrian || "-",
+          st: order.st_antrian || "-",
+          sc: order.sc_antrian || "-",
+          status_keterangan: order.status_antrian || "-",
+        },
+      ];
+
+      tableY += 8;
+      for (const row of dataRows) {
+        cx = tableX;
+        for (let i = 0; i < colWidths.length; i++) {
+          doc.rect(cx, tableY, colWidths[i], 8);
+          cx += colWidths[i];
+        }
+
+        doc.text(row.no, tableX + 2, tableY + 6);
+        doc.text(row.type_mesin, tableX + 10, tableY + 6);
+        doc.text(row.serial_number, tableX + 65, tableY + 6);
+        doc.text(row.model, tableX + 120, tableY + 6);
+        doc.text(row.merk, tableX + 165, tableY + 6);
+        doc.text(row.st, tableX + 210, tableY + 6);
+        doc.text(row.sc, tableX + 220, tableY + 6);
+        doc.text(row.status_keterangan, tableX + 235, tableY + 6);
+        tableY += 8;
+      }
+
+      // ===== PERMASALAHAN =====
+      const pmY = tableY + 6;
+      const pmX = marginX + 2;
+
+      doc.setFont("helvetica", "bold");
+      doc.text("PERMASALAHAN:", pmX + 4, pmY);
+      doc.setFont("helvetica", "normal");
+
+      const pmTextStartY = pmY + 6;
+      const masalah =
+        order.permasalahan ||
+        `Backup Data / Cek Data CCTV (${order.lokasi || "-"})\nJumlah Channel DVR: ${
+          order.jumlah_channel_dvr || "-"
+        }\nJumlah Kamera: ${order.jumlah_kamera || "-"}`;
+
+      const pmLines = String(masalah).split("\n");
+      const pmBoxHeight = pmLines.length * 6 + 12;
+
+      doc.rect(pmX, pmY - 6, 130, pmBoxHeight);
+      pmLines.forEach((ln, idx) => doc.text(ln, pmX + 6, pmTextStartY + idx * 6));
+
+      // ===== PENYELESAIAN =====
+      const penyY = pmY + pmBoxHeight + 2;
+      const penyX = pmX;
+      doc.setFont("helvetica", "bold");
+      doc.text("PENYELESAIAN:", penyX + 4, penyY);
+      doc.setFont("helvetica", "normal");
+
+      const penyTextStartY = penyY + 6;
+      const penyelesaian = order.penyelesaian || "Backup HDD Lama / Baru";
+      const lineHeight = 6;
+      const totalLines = 9;
+      const penyBoxHeight = totalLines * lineHeight + 14;
+      doc.rect(penyX, penyY - 6, 130, penyBoxHeight);
+      doc.text(penyelesaian, penyX + 6, penyTextStartY);
+
+      const rightColX = penyX + 70;
+      const dataPairs = [
+        { left: `SN HDD Lama: ${order.serial_lama || "-"}`, right: `SN HDD Baru: ${order.serial_baru || "-"}` },
+        { left: `Kapasitas: ${order.kapasitas_lama || "-"}`, right: `Kapasitas: ${order.kapasitas_baru || "-"}` },
+        { left: `Sisa: ${order.sisa_lama || "-"}`, right: `Sisa: ${order.sisa_baru || "-"}` },
+        { left: `ST: ${order.st_lama || "-"}`, right: `ST: ${order.st_baru || "-"}` },
+      ];
+
+      dataPairs.forEach((pair, idx) => {
+        const y = penyTextStartY + (idx + 1) * lineHeight;
+        doc.text(pair.left, penyX + 6, y);
+        doc.text(pair.right, rightColX, y);
+      });
+
+      doc.setFont("helvetica", "bold");
+      doc.text("History Backup Data:", penyX + 4, penyTextStartY + (dataPairs.length + 1) * lineHeight + 2);
+      doc.setFont("helvetica", "normal");
+
+      const historyY = penyTextStartY + (dataPairs.length + 2) * lineHeight;
+      const historyPairs = [
+        { left: `Mulai Tanggal: ${order.mtrecord || "-"}`, right: `Mulai Jam: ${order.mjrecord || "-"}` },
+        { left: `Sampai Tanggal: ${order.strecord || "-"}`, right: `Sampai Jam: ${order.sjrecord || "-"}` },
+        { left: `Tanggal Record: ${order.tanggal_record || "-"}`, right: `Jam Record: ${order.jam_record || "-"}` },
+        { left: `Firmware DVR: ${order.firmware_dvr || "-"}`, right: "" },
+      ];
+
+      historyPairs.forEach((pair, idx) => {
+        const y = historyY + idx * lineHeight;
+        doc.text(pair.left, penyX + 6, y);
+        if (pair.right) doc.text(pair.right, rightColX, y);
+      });
+
+      // ===== CATATAN PELANGGAN =====
+      const noteY = penyY + penyBoxHeight + 2;
+      const noteHeight = 13;
+      const noteWidth = 283;
+      doc.setFont("helvetica", "bold");
+      doc.text("CATATAN PELANGGAN:", penyX + 4, noteY);
+      doc.setFont("helvetica", "normal");
+      doc.rect(penyX, noteY - 6, noteWidth, noteHeight);
+      doc.text(order.catatan_pelanggan || "-", penyX + 6, noteY + 4, { maxWidth: noteWidth - 12 });
+
+      // ===== TANDA TANGAN (fix posisi) =====
+      const signH = 40;
+      const signW = 130;
+      const signGap = 0;
+      let signY = noteY + noteHeight + -115;
+
+      const signX = penyX + 145;
+
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.5);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+
+      // Kotak PELANGGAN (atas)
+      doc.rect(signX, signY, signW, signH);
+      doc.text("Mengetahui Pelanggan", signX + signW / 2, signY + signH - 6, { align: "center" });
+
+      // Kotak PT JAGARTI (bawah)
+      const jagartiY = signY + signH + signGap;
+      doc.rect(signX, jagartiY, signW, signH);
+      doc.text("PT. JAGARTI SARANA TELEKOMUNIKASI", signX + signW / 2, jagartiY + signH - 6, {
+        align: "center",
+      });
+
+      // --- PAGE 2: dokumentasi foto ---
+      doc.addPage({ orientation: "landscape", unit: "mm", format: "a4" });
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("DOKUMENTASI PEKERJAAN", 148.5, 15, { align: "center" });
+
+      const imgW = 135;
+      const imgH = 90;
+      const imgStartX = 10;
+      let imgX = imgStartX;
+      let imgY = 25;
+      for (let i = 1; i <= 4; i++) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text(`FOTO ${i}`, imgX + 2, imgY);
+        const path = `workorder/${order.no_spk}/foto${i}.jpg`;
+        const base64 = await fetchImageAsBase64(path);
+        if (base64) {
+          try {
+            doc.addImage(base64, "JPEG", imgX, imgY + 5, imgW, imgH);
+          } catch (e) {
+            doc.setFillColor(230, 230, 230);
+            doc.rect(imgX, imgY + 5, imgW, imgH, "F");
+          }
+        } else {
+          doc.setFillColor(230, 230, 230);
+          doc.rect(imgX, imgY + 5, imgW, imgH, "F");
+        }
+
+        if (i % 2 === 1) {
+          imgX = imgStartX + imgW + 10;
+        } else {
+          imgX = imgStartX;
+          imgY += imgH + 30;
+        }
+      }
+
+      // upload file to supabase storage
+      const pdfBlob = doc.output("blob");
+      const arrayBuffer = await pdfBlob.arrayBuffer();
+      const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, {
+        type: "application/pdf",
+      });
+      const filePath = `ba/${order.no_spk}.pdf`;
+
+      const { error: uploadErr } = await supabase.storage.from("workorder").upload(filePath, pdfFile, {
+        upsert: true,
+      });
+
+      if (uploadErr) {
+        console.error("Upload PDF error:", uploadErr);
+      } else {
+        const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
+        const { error: updateErr } = await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
+        if (updateErr) {
+          console.error("Update link_ba error:", updateErr);
+        }
+      }
+
+      return true;
+    } catch (err) {
+      console.error("Gagal generate PDF:", err.message || err);
+      return false;
     }
   };
 
+  // --- client-side filtered & sorted view (applies on current page set returned by server) ---
   const filteredOrders = orders.filter((o) => {
-    const matchesSearch = o.lokasi
-      ?.toLowerCase()
-      .includes(search.toLowerCase());
-    const orderDate = o.created_at ? new Date(o.created_at) : null;
-    const from = fromDate ? new Date(fromDate) : null;
-    const to = toDate ? new Date(toDate) : null;
-
-    let matchesDate = true;
-    if (from && orderDate < from) matchesDate = false;
-    if (to && orderDate > to) matchesDate = false;
-
-    return matchesSearch && matchesDate;
+    const matchesSearch = o.lokasi?.toLowerCase().includes(search.toLowerCase());
+    // date filter already applied server-side by created_at when fetching; but we keep additional safety
+    return matchesSearch;
   });
 
   const sortedOrders = [...filteredOrders].sort((a, b) => {
@@ -253,9 +504,7 @@ const autoUpdatePDF = async (order) => {
     if (type === "CM") color = "bg-orange-500 text-white";
     if (type === "INSTALL") color = "bg-blue-500 text-white";
     return (
-      <span
-        className={`px-2 py-1 rounded-md text-xs font-semibold ${color}`}
-      >
+      <span className={`px-2 py-1 rounded-md text-xs font-semibold ${color}`}>
         {type}
       </span>
     );
@@ -285,14 +534,9 @@ const autoUpdatePDF = async (order) => {
 
   return (
     <div className="p-6 relative">
-      {/* ✅ Logo kiri atas */}
-      <img
-        src="/logo.png"
-        alt="Logo"
-        className="absolute top-4 left-4 w-20 h-auto"
-      />
+      <img src="/logo.png" alt="Logo" className="absolute top-4 left-4 w-20 h-auto" />
 
-      <h1 className="text-2xl font-bold mb-6 text-center">Closed Data</h1>
+      <h1 className="text-2xl font-bold mb-6 text-center">Open Data</h1>
 
       <div className="flex flex-col md:flex-row items-center justify-between mb-4 gap-3">
         <div className="flex items-center border rounded-lg px-3 py-2 w-full md:w-1/3 bg-white shadow-sm">
@@ -307,41 +551,21 @@ const autoUpdatePDF = async (order) => {
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg"
-          />
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
           <span>-</span>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="px-3 py-2 border rounded-lg"
-          />
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="px-3 py-2 border rounded-lg" />
 
-          <button
-            onClick={() => setSortAsc(!sortAsc)}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition"
-          >
-            {sortAsc ? (
-              <SortAsc className="w-4 h-4 mr-2" />
-            ) : (
-              <SortDesc className="w-4 h-4 mr-2" />
-            )}
+          <button onClick={() => setSortAsc(!sortAsc)} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition">
+            {sortAsc ? <SortAsc className="w-4 h-4 mr-2" /> : <SortDesc className="w-4 h-4 mr-2" />}
             Sort
           </button>
 
-          <button
-            onClick={exportToExcel}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition"
-          >
+          <button onClick={exportToExcel} className="px-4 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition">
             Export Excel
           </button>
 
           <button
-            onClick={handleRefresh}
+            onClick={() => handleRefresh(fromDate, toDate, emplNo, role)}
             disabled={refreshing}
             className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg shadow hover:bg-orange-700 transition disabled:opacity-50"
           >
@@ -361,13 +585,7 @@ const autoUpdatePDF = async (order) => {
                 <th className="px-4 py-3">No SPK</th>
                 <th className="px-4 py-3">Order Date</th>
                 <th className="px-4 py-3">Lokasi</th>
-                <th className="px-4 py-3">Hardisk</th>
-                <th className="px-4 py-3">FPS</th>
-                <th className="px-4 py-3">DVR Condition</th>
-                <th className="px-4 py-3">Camera Condition</th>
-                <th className="px-4 py-3">UPS</th>
-                <th className="px-4 py-3">Alarm</th>
-                <th className="px-4 py-3">Panic Button</th>
+                <th className="px-4 py-3">Jam Problem</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Link BA</th>
@@ -382,32 +600,17 @@ const autoUpdatePDF = async (order) => {
                 </tr>
               ) : (
                 sortedOrders.map((o, i) => (
-                  <tr
-                    key={o.id ?? i}
-                    className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}
-                  >
+                  <tr key={o.id ?? i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                     <td className="px-4 py-3 border-t">{o.no_spk}</td>
-                    <td className="px-4 py-3 border-t">
-                      {o.created_at
-                        ? new Date(o.created_at).toLocaleDateString()
-                        : "-"}
-                    </td>
+                    <td className="px-4 py-3 border-t">{o.created_at ? new Date(o.created_at).toLocaleDateString() : "-"}</td>
                     <td className="px-4 py-3 border-t">{o.lokasi}</td>
-                    <td className="px-4 py-3 border-t">{o.hardisk}</td>
-                    <td className="px-4 py-3 border-t">{o.fps}</td>
-                    <td className="px-4 py-3 border-t">{o.dvr_condition}</td>
-                    <td className="px-4 py-3 border-t">{o.camera_condition}</td>
-                    <td className="px-4 py-3 border-t">{o.ups}</td>
-                    <td className="px-4 py-3 border-t">{o.alarm}</td>
-                    <td className="px-4 py-3 border-t">{o.panic_button}</td>
+                    <td className="px-4 py-3 border-t">{o.jam_problem}</td>
                     <td className="px-4 py-3 border-t">{getTypeBadge(o.type)}</td>
-                    <td className="px-4 py-3 border-t">
-                      {getStatusBadge(o.status)}
-                    </td>
+                    <td className="px-4 py-3 border-t">{getStatusBadge(o.status)}</td>
                     <td className="px-4 py-3 border-t text-blue-600 underline">
                       {o.link_ba ? (
-                        <a href={o.link_ba} target="_blank" rel="noreferrer">
-                          Link
+                        <a href={o.link_ba} target="_blank" rel="noopener noreferrer">
+                          Lihat BA
                         </a>
                       ) : (
                         "-"
@@ -418,8 +621,48 @@ const autoUpdatePDF = async (order) => {
               )}
             </tbody>
           </table>
+
+          {/* PAGINATION CONTROL */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-3 p-4">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onChangePage(page - 1)}
+                disabled={page <= 1}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg disabled:opacity-50"
+              >
+                Previous
+              </button>
+
+              <button
+                onClick={() => onChangePage(page + 1)}
+                disabled={page >= totalPages}
+                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-600">
+                Page {page} of {totalPages} — {totalCount} items
+              </span>
+
+              <label className="text-sm text-gray-600">Per page:</label>
+              <select
+                value={pageSize}
+                onChange={(e) => onChangePageSize(Number(e.target.value))}
+                className="px-3 py-1 border rounded"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
