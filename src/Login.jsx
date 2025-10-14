@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabaseClient";
 
@@ -7,8 +7,54 @@ export default function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
   const navigate = useNavigate();
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    // Simple animated particle background
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    let particles = [];
+    let animationFrameId;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    window.addEventListener("resize", resize);
+    resize();
+
+    for (let i = 0; i < 60; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 2 + 1,
+        dx: (Math.random() - 0.5) * 0.5,
+        dy: (Math.random() - 0.5) * 0.5,
+      });
+    }
+
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(255,255,255,0.3)";
+      particles.forEach((p) => {
+        p.x += p.dx;
+        p.y += p.dy;
+        if (p.x < 0 || p.x > canvas.width) p.dx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.dy *= -1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      animationFrameId = requestAnimationFrame(animate);
+    };
+    animate();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
 
   const handleLogin = async () => {
     setLoading(true);
@@ -30,15 +76,11 @@ export default function Login({ onLogin }) {
         return;
       }
 
-      const { data: userDetails, error: userError } = await supabase
+      const { data: userDetails } = await supabase
         .from("users")
         .select("*")
         .eq("email", authData.user.email)
         .single();
-
-      if (userError) {
-        console.warn("Gagal ambil data user:", userError.message);
-      }
 
       localStorage.setItem("empl_no", userDetails?.empl_no || "");
       localStorage.setItem("empl_name", userDetails?.empl_name || authData.user.email);
@@ -47,7 +89,6 @@ export default function Login({ onLogin }) {
 
       if (onLogin) onLogin();
       navigate("/", { replace: true });
-
     } catch (err) {
       console.error(err);
       setError("Terjadi kesalahan login");
@@ -57,18 +98,26 @@ export default function Login({ onLogin }) {
   };
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#1e3a8a]">
-      {/* Animated gradient background */}
-      <div className="absolute inset-0 animate-gradient bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-blue-500/30 via-purple-500/20 to-indigo-700/10 blur-3xl opacity-70"></div>
+    <div className="relative min-h-screen w-full overflow-hidden bg-[#020617] text-white">
+      {/* Particle Canvas */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 z-0"
+        style={{ width: "100%", height: "100%" }}
+      ></canvas>
 
-      {/* Floating glowing orbs */}
-      <div className="absolute -top-40 -left-40 h-96 w-96 rounded-full bg-indigo-500/20 blur-[100px] animate-pulse" />
-      <div className="absolute bottom-0 right-0 h-[400px] w-[400px] rounded-full bg-cyan-400/10 blur-[120px] animate-ping" />
+      {/* Animated Gradient Lights */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-32 left-1/4 h-[400px] w-[400px] bg-blue-600/30 rounded-full blur-[120px] animate-[float_8s_ease-in-out_infinite]" />
+        <div className="absolute top-1/3 right-0 h-[500px] w-[500px] bg-purple-500/20 rounded-full blur-[150px] animate-[float_10s_ease-in-out_infinite]" />
+        <div className="absolute bottom-0 left-0 h-[300px] w-[300px] bg-cyan-400/30 rounded-full blur-[100px] animate-[float_12s_ease-in-out_infinite]" />
+      </div>
 
-      <div className="relative z-10 grid min-h-screen w-full grid-cols-12 items-center">
+      {/* Main Content */}
+      <div className="relative z-10 grid min-h-screen w-full grid-cols-12 items-center px-10">
         {/* LEFT SIDE */}
-        <div className="col-span-7 flex flex-col justify-center px-20 text-white">
-          <h1 className="mb-8 text-6xl font-extrabold leading-tight tracking-tight drop-shadow-[0_0_25px_rgba(59,130,246,0.5)]">
+        <div className="col-span-7 flex flex-col justify-center pl-16">
+          <h1 className="mb-8 text-6xl font-extrabold leading-tight tracking-tight drop-shadow-[0_0_30px_rgba(59,130,246,0.6)]">
             Jagarti Sarana Telekomunikasi
           </h1>
           <p className="mb-6 text-2xl italic opacity-90">Expanding Possibilities.</p>
@@ -84,7 +133,8 @@ export default function Login({ onLogin }) {
 
         {/* RIGHT SIDE */}
         <div className="col-span-5 flex items-center justify-center">
-          <div className="w-full max-w-md rounded-2xl bg-white/10 backdrop-blur-lg border border-white/20 p-8 shadow-[0_0_40px_rgba(0,0,0,0.3)] transition-all hover:shadow-[0_0_60px_rgba(59,130,246,0.3)]">
+          <div className="relative w-full max-w-md rounded-2xl bg-white/10 backdrop-blur-xl border border-white/20 p-8 shadow-[0_0_50px_rgba(59,130,246,0.2)]">
+            <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 blur-xl opacity-40"></div>
             <h2 className="mb-8 text-3xl font-bold text-white">
               Hi, Welcome Back! 👋
             </h2>
@@ -140,11 +190,7 @@ export default function Login({ onLogin }) {
 
             <p className="text-center text-sm text-gray-300">
               Download The Application:{" "}
-              <a
-                href="/cctv.v3.apk"
-                download
-                className="text-blue-400 hover:underline"
-              >
+              <a href="/cctv.v3.apk" download className="text-blue-400 hover:underline">
                 Click Here
               </a>
             </p>
@@ -152,22 +198,18 @@ export default function Login({ onLogin }) {
         </div>
       </div>
 
-      {/* Animasi gradien halus */}
+      {/* Animations */}
       <style jsx>{`
-        @keyframes gradientMove {
+        @keyframes float {
           0% {
-            background-position: 0% 50%;
+            transform: translateY(0px) translateX(0px);
           }
           50% {
-            background-position: 100% 50%;
+            transform: translateY(-30px) translateX(20px);
           }
           100% {
-            background-position: 0% 50%;
+            transform: translateY(0px) translateX(0px);
           }
-        }
-        .animate-gradient {
-          background-size: 200% 200%;
-          animation: gradientMove 8s ease infinite;
         }
       `}</style>
     </div>
