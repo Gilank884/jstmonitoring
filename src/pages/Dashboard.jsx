@@ -182,9 +182,9 @@ export default function Dashboard() {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
-        className="text-4xl font-extrabold mb-10 text-center bg-white bg-clip-text text-transparent drop-shadow-sm"
+        className="text-4xl font-extrabold mb-10 text-center bg-black bg-clip-text text-transparent drop-shadow-sm"
       >
-        ⚡ Smart CCTV Dashboard
+         JST CCTV DASHBOARD
       </motion.h1>
 
       {/* Filter & Search */}
