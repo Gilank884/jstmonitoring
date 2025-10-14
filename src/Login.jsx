@@ -71,7 +71,7 @@ export default function Login({ onLogin }) {
           <h1 className="mb-8 text-6xl font-extrabold leading-tight tracking-tight drop-shadow-[0_0_25px_rgba(59,130,246,0.5)]">
             Jagarti Sarana Telekomunikasi
           </h1>
-          <p className="mb-6 text-2xl italic opacity-90">Work fast. Live slow.</p>
+          <p className="mb-6 text-2xl italic opacity-90">Expanding Possibilities.</p>
           <a
             href="https://wa.me/6282332901726?text=Hai%20Saya%20Ingin%20daftar%20Di%20aplikasi%20JST"
             target="_blank"
