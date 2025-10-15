@@ -7,7 +7,6 @@ export default function RequestPage() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 🔹 Ambil data dari tabel "request"
   const fetchRequests = async () => {
     try {
       setLoading(true);
@@ -19,7 +18,7 @@ export default function RequestPage() {
       if (error) throw error;
       setRequests(data || []);
 
-      // setelah data diambil, jalankan auto update PDF
+      // jalankan auto generate BA PDF (hapus & buat ulang)
       autoGenerateBA(data || []);
     } catch (err) {
       console.error("Error mengambil data request:", err.message);
@@ -28,60 +27,62 @@ export default function RequestPage() {
     }
   };
 
-  // 🔹 Auto generate BA PDF jika belum ada link_ba
   const autoGenerateBA = async (dataList) => {
     for (const item of dataList) {
-      if (!item.link_ba) {
-        try {
-          const pdf = new jsPDF();
-          pdf.setFontSize(18);
-          pdf.text("BERITA ACARA PERMINTAAN BARANG", 20, 20);
+      try {
+        const filePath = `request/${item.id}.pdf`;
 
-          pdf.setFontSize(12);
-          pdf.text(`ID Request: ${item.id}`, 20, 40);
-          pdf.text(`Nama Barang: ${item.barang || "-"}`, 20, 50);
-          pdf.text(`Jumlah Barang: ${item.jumlah_barang || "-"}`, 20, 60);
-          pdf.text(`Status: ${item.status || "-"}`, 20, 70);
+        // Hapus file lama jika ada
+        const { error: removeError } = await supabase.storage
+          .from("workorder")
+          .remove([filePath]);
+        if (removeError) console.log(`File lama untuk ID ${item.id} dihapus:`, removeError.message);
 
-          pdf.text(
-            "Dokumen ini dibuat secara otomatis oleh sistem Request Monitoring.",
-            20,
-            90
-          );
+        // Generate PDF baru
+        const pdf = new jsPDF();
+        pdf.setFontSize(18);
+        pdf.text("BERITA ACARA PERMINTAAN BARANG", 20, 20);
+        pdf.setFontSize(12);
+        pdf.text(`ID Request: ${item.id}`, 20, 40);
+        pdf.text(`Nama Barang: ${item.barang || "-"}`, 20, 50);
+        pdf.text(`Jumlah Barang: ${item.jumlah_barang || "-"}`, 20, 60);
+        pdf.text(`Status: ${item.status || "-"}`, 20, 70);
+        pdf.text("Dokumen ini dibuat otomatis oleh sistem Request Monitoring.", 20, 90);
 
-          const pdfBlob = pdf.output("blob");
-          const filePath = `${item.id}.pdf`;
+        const pdfBlob = pdf.output("blob");
 
-          // Upload ke Supabase Storage (bucket: request)
-          const { error: uploadError } = await supabase.storage
-            .from("request")
-            .upload(filePath, pdfBlob, {
-              contentType: "application/pdf",
-              upsert: true,
-            });
+        // Upload PDF baru
+        const { error: uploadError } = await supabase.storage
+          .from("workorder")
+          .upload(filePath, pdfBlob, {
+            contentType: "application/pdf",
+            upsert: true,
+          });
+        if (uploadError) throw uploadError;
 
-          if (uploadError) throw uploadError;
+        // Ambil signed URL (misal 1 menit) lewat API handler atau langsung di client
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from("workorder")
+          .createSignedUrl(filePath, 60); // valid 60 detik
+        if (signedError) throw signedError;
 
-          // URL publik
-          const publicUrl = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=request/${filePath}`;
+        const publicUrl = signedData.signedUrl;
 
-          // Update kolom link_ba di tabel
-          const { error: updateError } = await supabase
-            .from("request")
-            .update({ link_ba: publicUrl })
-            .eq("id", item.id);
+        // Update kolom link_ba
+        const { error: updateError } = await supabase
+          .from("request")
+          .update({ link_ba: publicUrl })
+          .eq("id", item.id);
+        if (updateError) throw updateError;
 
-          if (updateError) throw updateError;
-
-          console.log(`✅ BA untuk ID ${item.id} berhasil dibuat.`);
-        } catch (err) {
-          console.error(`Gagal membuat BA untuk ID ${item.id}:`, err.message);
-        }
+        console.log(`✅ BA untuk ID ${item.id} berhasil dibuat.`);
+      } catch (err) {
+        console.error(`Gagal membuat BA untuk ID ${item.id}:`, err.message);
       }
     }
   };
 
-  useEffect(() => {
+  React.useEffect(() => {
     fetchRequests();
   }, []);
 
@@ -89,9 +90,7 @@ export default function RequestPage() {
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-md p-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-gray-800">
-            Daftar Request Barang
-          </h1>
+          <h1 className="text-2xl font-semibold text-gray-800">Daftar Request Barang</h1>
           <button
             onClick={fetchRequests}
             disabled={loading}
@@ -115,32 +114,19 @@ export default function RequestPage() {
             <tbody>
               {requests.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan="4"
-                    className="text-center text-gray-500 py-6 italic"
-                  >
-                    {loading
-                      ? "Sedang memuat data..."
-                      : "Belum ada data request"}
+                  <td colSpan="4" className="text-center text-gray-500 py-6 italic">
+                    {loading ? "Sedang memuat data..." : "Belum ada data request"}
                   </td>
                 </tr>
               ) : (
                 requests.map((req) => (
-                  <tr
-                    key={req.id}
-                    className="border-t hover:bg-gray-50 transition"
-                  >
-                    <td className="px-4 py-3 font-medium text-gray-800">
-                      {req.barang || "-"}
-                    </td>
+                  <tr key={req.id} className="border-t hover:bg-gray-50 transition">
+                    <td className="px-4 py-3 font-medium text-gray-800">{req.barang || "-"}</td>
                     <td className="px-4 py-3">{req.jumlah_barang || "-"}</td>
                     <td
                       className={`px-4 py-3 font-medium ${
-                        req.status === "Selesai"
-                          ? "text-green-600"
-                          : req.status === "Proses"
-                          ? "text-yellow-600"
-                          : "text-gray-600"
+                        req.status === "Selesai" ? "text-green-600" :
+                        req.status === "Proses" ? "text-yellow-600" : "text-gray-600"
                       }`}
                     >
                       {req.status || "-"}

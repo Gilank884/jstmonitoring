@@ -7,6 +7,7 @@ import Profile from "./pages/Profile.jsx";
 import WorkOrder from "./pages/WorkOrder.jsx";
 import CloseOrder from "./pages/CloseOrder.jsx";
 import RequestPage from "./pages/RequestPage.jsx"; // ✅ import RequestPage
+import Inventory from "./pages/Inventory.jsx"
 
 // ProtectedRoute wrapper
 function ProtectedRoute({ isAuthenticated }) {
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="workorder" element={<WorkOrder />} />
             <Route path="closeorder" element={<CloseOrder />} />
             <Route path="request" element={<RequestPage />} /> {/* ✅ Tambahan */}
+            <Route path="Inventory" element={<Inventory />} />
           </Route>
         </Route>
 

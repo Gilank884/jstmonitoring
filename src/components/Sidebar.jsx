@@ -7,6 +7,9 @@ import {
   FiDatabase,
   FiCheckCircle,
   FiX,
+  FiBox,
+  FiPackage,
+  FiTwitch,
 } from "react-icons/fi";
 import { gsap } from "gsap";
 
@@ -21,7 +24,9 @@ const Sidebar = () => {
     { name: "Profile", path: "/profile", icon: <FiUser /> },
     { name: "Work Order", path: "/workorder", icon: <FiDatabase /> },
     { name: "Close Order", path: "/closeorder", icon: <FiCheckCircle /> },
-    { name: "Request Page", path: "/request", icon: <FiCheckCircle /> }, // menu baru
+    { name: "Request Page", path: "/request", icon: <FiBox /> }, 
+    { name: "Inventory", path: "/inventory", icon: <FiPackage /> }, 
+    { name: "Travel Order", path: "/inventory", icon: <FiTwitch /> },
   ];
 
   // Set posisi awal sidebar dan overlay
