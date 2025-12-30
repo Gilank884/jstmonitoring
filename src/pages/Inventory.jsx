@@ -55,7 +55,7 @@ export default function CreativePage() {
 
       {/* Footer */}
       <footer className="mt-24 text-gray-400 text-sm text-center">
-        © {new Date().getFullYear()} — Dibuat dengan ❤️ & React.js
+        © {new Date().getFullYear()} — By Jagarti Team
       </footer>
     </div>
   );

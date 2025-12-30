@@ -10,6 +10,7 @@ import {
   FiBox,
   FiPackage,
   FiTwitch,
+  FiDownload
 } from "react-icons/fi";
 import { gsap } from "gsap";
 
@@ -19,14 +20,15 @@ const Sidebar = () => {
   const sidebarRef = useRef(null);
   const overlayRef = useRef(null);
 
+  // ✅ Menu sudah disusun tanpa duplikasi path atau nama
   const menus = [
     { name: "Dashboard", path: "/", icon: <FiHome /> },
     { name: "Profile", path: "/profile", icon: <FiUser /> },
     { name: "Work Order", path: "/workorder", icon: <FiDatabase /> },
     { name: "Close Order", path: "/closeorder", icon: <FiCheckCircle /> },
-    { name: "Request Page", path: "/request", icon: <FiBox /> }, 
-    { name: "Inventory", path: "/inventory", icon: <FiPackage /> }, 
-    { name: "Travel Order", path: "/inventory", icon: <FiTwitch /> },
+    { name: "Report Issue", path: "/reportissue", icon: <FiBox /> },
+    { name: "Report", path: "/report", icon: <FiDownload /> },
+
   ];
 
   // Set posisi awal sidebar dan overlay
@@ -88,7 +90,7 @@ const Sidebar = () => {
       {/* Tombol menu mobile */}
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed top-4 left-4 z-50 bg-gray-200 hover:bg-gray-300 text-gray-800 p-2 rounded-xl shadow-md transition md:hidden"
+        className="fixed top-4 left-4 z-50 bg-[#4a7e93] hover:bg-[#3c6a7d] text-white p-2 rounded-xl shadow-md transition md:hidden"
       >
         <FiMenu size={22} />
       </button>
@@ -102,30 +104,30 @@ const Sidebar = () => {
           backgroundPosition: "85% center",
           backgroundSize: "150px auto",
         }}
-        className="fixed inset-0 z-40 opacity-0 pointer-events-none md:hidden"
+        className="fixed inset-0 z-40 opacity-0 pointer-events-none bg-black/40 md:hidden"
         onClick={() => setIsOpen(false)}
       ></div>
 
       {/* Sidebar */}
       <div
         ref={sidebarRef}
-        className="fixed md:relative top-0 left-0 h-screen bg-gradient-to-b from-gray-100 to-gray-200 text-gray-800 shadow-xl flex flex-col w-64 z-50 md:translate-x-0"
+        className="fixed md:relative top-0 left-0 h-screen bg-gradient-to-b from-[#4a7e93] to-[#1F3361] text-white shadow-[4px_0_15px_rgba(0,0,0,0.3)] flex flex-col w-64 z-50"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-300">
-          <span className="text-lg font-bold tracking-wide text-gray-800">
-            CCTV MONITORING
+        <div className="flex items-center justify-between p-4 border-b border-white/20">
+          <span className="text-lg font-bold tracking-wide text-white">
+            Jagarti Sarana Telekomunikasi
           </span>
           <button
             onClick={() => setIsOpen(false)}
-            className="text-gray-700 hover:text-black md:hidden"
+            className="text-white hover:text-gray-200 md:hidden"
           >
             <FiX size={22} />
           </button>
         </div>
 
         {/* Menu */}
-        <nav className="flex-1 mt-4 px-3 space-y-2">
+        <nav className="flex-1 mt-4 px-3 space-y-1">
           {menus.map((item) => {
             const isActive = location.pathname === item.path;
             return (
@@ -133,16 +135,14 @@ const Sidebar = () => {
                 key={item.path}
                 to={item.path}
                 onClick={() => window.innerWidth < 768 && setIsOpen(false)}
-                className={`flex items-center gap-3 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
-                  isActive
-                    ? "bg-gray-300 text-gray-900 shadow-inner"
-                    : "hover:bg-gray-300 text-gray-700"
-                }`}
+                className={`flex items-center gap-3 px-4 py-2 rounded-lg font-medium transition-all duration-200 ${isActive
+                  ? "bg-white/20 text-white shadow-inner"
+                  : "hover:bg-white/15 text-gray-200"
+                  }`}
               >
                 <span
-                  className={`text-lg ${
-                    isActive ? "text-gray-900" : "text-gray-600"
-                  }`}
+                  className={`text-lg ${isActive ? "text-white" : "text-gray-300"
+                    }`}
                 >
                   {item.icon}
                 </span>
@@ -153,7 +153,7 @@ const Sidebar = () => {
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-300 text-xs text-gray-500">
+        <div className="p-4 border-t border-white/20 text-xs text-gray-200">
           © 2025 Jagarti Team
         </div>
       </div>

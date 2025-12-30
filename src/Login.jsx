@@ -84,8 +84,9 @@ export default function Login({ onLogin }) {
 
       localStorage.setItem("empl_no", userDetails?.empl_no || "");
       localStorage.setItem("empl_name", userDetails?.empl_name || authData.user.email);
-      localStorage.setItem("role", userDetails?.role || "Karyawan");
-      localStorage.setItem("photo_url", userDetails?.photo_url || "/lank.jpg");
+      localStorage.setItem("position", userDetails?.position || "Karyawan"); // 🔹 pakai position
+      localStorage.setItem("photo_url", userDetails?.photo_url || "/blank.jpg");
+
 
       if (onLogin) onLogin();
       navigate("/", { replace: true });
