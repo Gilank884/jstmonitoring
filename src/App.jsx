@@ -75,6 +75,7 @@ export default function App() {
               <Route path="workorder/:id" element={<WorkOrderDetail />} />
               <Route path="closeorder" element={<CloseOrder />} />
               <Route path="closeorder/:id" element={<CloseOrderDetail />} />
+              <Route path="close-order-detail/:id" element={<CloseOrderDetail />} />
               <Route path="request" element={<RequestPage />} />
               <Route path="inventory" element={<Inventory />} />
               <Route path="reportissue" element={<ReportIssue />} />

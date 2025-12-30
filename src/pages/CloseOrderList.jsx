@@ -106,7 +106,7 @@ export default function CloseOrderList() {
     const exportToExcel = () => {
         const dataToExport = orders.map(o => ({
             ...o,
-            link_ba: `https://jstmonitoring.netlify.app/closeorder/${o.id}`
+            link_ba: `https://jstmonitoring.netlify.app/.netlify/functions/file?path=ba/${o.no_spk}.pdf`
         }));
         const worksheet = XLSX.utils.json_to_sheet(dataToExport);
         const workbook = XLSX.utils.book_new();

@@ -459,11 +459,28 @@ export async function generateBA(order) {
             }
         }
 
-        // ===== DISPLAY ON-DEMAND (NO UPLOAD) =====
+        // ===== DISPLAY ON-DEMAND & UPLOAD (Hybrid) =====
         const pdfBlob = doc.output("blob");
         const blobUrl = URL.createObjectURL(pdfBlob);
 
-        return { ok: true, url: blobUrl };
+        // Upload in background (awaiting to ensure persistence)
+        const arrayBuffer = await pdfBlob.arrayBuffer();
+        const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, { type: "application/pdf" });
+        const filePath = `ba/${order.no_spk}.pdf`;
+
+        // Upload to Supabase
+        const { error: uploadErr } = await supabase.storage.from("workorder").upload(filePath, pdfFile, { upsert: true });
+
+        if (uploadErr) {
+            console.warn("Upload PDF failed:", uploadErr);
+        } else {
+            // Update DB
+            const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
+            const { error: updateErr } = await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
+            if (updateErr) console.warn("Update DB link_ba failed:", updateErr);
+        }
+
+        return { ok: true, url: blobUrl }; // Return blobUrl for instant preview, but file is saved.
 
     } catch (err) {
         console.error("generateBA error:", err);
