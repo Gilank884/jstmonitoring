@@ -24,8 +24,8 @@ export default function CloseOrderDetail() {
                 if (mounted) {
                     setOrder(data);
                     await loadPhotosAndSignatures(data);
-                    // Auto-generate BA on page load
-                    await generateBA(data);
+                    // Auto-generate BA on page load removed for on-demand
+                    // await generateBA(data);
                 }
             } catch (err) {
                 console.error(err);
@@ -155,6 +155,21 @@ export default function CloseOrderDetail() {
     };
 
 
+
+    const handleDownloadBA = async () => {
+        if (!order) return;
+        try {
+            const res = await generateBA(order);
+            if (res.ok && res.url) {
+                window.open(res.url, "_blank");
+            } else {
+                alert("Gagal generate PDF: " + (res.error?.message || "Unknown error"));
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Error generating PDF");
+        }
+    };
 
     if (loading) return <div className="p-6 text-center">Loading...</div>;
     if (!order) return <div className="p-6 text-center">Order tidak ditemukan</div>;
@@ -399,9 +414,12 @@ export default function CloseOrderDetail() {
                             <div className="flex justify-between"><span className="text-gray-600">Type</span><span className="font-semibold">{order.type || '-'}</span></div>
                         </div>
 
-                        {order.link_ba && (
-                            <a href={order.link_ba} target="_blank" rel="noreferrer" className="mt-4 block text-center px-4 py-2 bg-green-600 text-white rounded">Download BA</a>
-                        )}
+                        <button
+                            onClick={handleDownloadBA}
+                            className="mt-4 w-full block text-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+                        >
+                            Download / View BA
+                        </button>
                     </div>
 
                     <div className="bg-white rounded-lg shadow p-4">

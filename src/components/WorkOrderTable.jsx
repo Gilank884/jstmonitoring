@@ -1,5 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { generateBA } from "../utils/pdfGenerator";
 
 export function getTypeBadge(type) {
     if (!type) return "-";
@@ -74,11 +75,18 @@ export default function WorkOrderTable({ orders, loading, page, totalPages, onPa
                                 <td className="px-4 py-3 border-t">{getTypeBadge(o.type)}</td>
                                 <td className="px-4 py-3 border-t">{getStatusBadge(o.status)}</td>
                                 <td className="px-4 py-3 border-t text-blue-600 underline">
-                                    {o.link_ba ? (
-                                        <a href={o.link_ba} target="_blank" rel="noopener noreferrer">Lihat BA</a>
-                                    ) : (
-                                        "-"
-                                    )}
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                const res = await generateBA(o);
+                                                if (res.ok && res.url) window.open(res.url, "_blank");
+                                                else alert("Gagal preview BA");
+                                            } catch (e) { console.error(e); }
+                                        }}
+                                        className="text-blue-600 underline hover:text-blue-800"
+                                    >
+                                        Preview BA
+                                    </button>
                                 </td>
                                 <td className="px-4 py-3 border-t">
                                     <div className="flex items-center gap-2">

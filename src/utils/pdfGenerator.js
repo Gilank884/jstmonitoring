@@ -1,16 +1,21 @@
 import { supabase } from "../supabaseClient";
 import { jsPDF } from "jspdf";
 
+const logoCache = { base64: null, timestamp: 0 };
+
 async function getLogoBase64() {
+    if (logoCache.base64) return logoCache.base64;
     try {
         const res = await fetch("/logo.png");
         if (!res.ok) return null;
         const blob = await res.blob();
-        return await new Promise((resolve) => {
+        const base64 = await new Promise((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result);
             reader.readAsDataURL(blob);
         });
+        logoCache.base64 = base64;
+        return base64;
     } catch (err) {
         console.warn("Gagal load logo:", err);
         return null;
@@ -36,16 +41,77 @@ async function fetchImageAsBase64(path) {
     }
 }
 
+// BATCH FETCH HELPER
+async function fetchAllPhotos(order, chosenPrefix) {
+    const promises = [];
+    for (let i = 1; i <= 8; i++) {
+        const path = `${chosenPrefix}/foto${i}.jpg`;
+        // Push a promise that resolves to { idx: i, base64: ... }
+        promises.push(
+            fetchImageAsBase64(path).then(base64 => ({ idx: i, base64 }))
+        );
+    }
+    return Promise.all(promises);
+}
+
 /**
  * generateBA(order)
  * - Generates FULL BA PDF with watermark, header, equipment table, signatures, photos
- * - Uploads to Supabase storage under `workorder/ba/{no_spk}.pdf`
+ * - Optimized for speed: Parallel fetching, caching, client-side blob generation.
  * - Returns { ok: boolean, url?: string, error?: any }
  */
 export async function generateBA(order) {
     try {
-        const logoBase64 = await getLogoBase64();
+        const logoBase64Promise = getLogoBase64();
         const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+        // 1. Detect Prefix
+        let chosenPrefix = `${order.no_spk}`;
+        try {
+            const { data: list1 } = await supabase.storage.from("workorder").list(chosenPrefix);
+            if (!list1 || list1.length === 0) {
+                const altPrefix = `workorder/${order.no_spk}`;
+                const { data: list2 } = await supabase.storage.from("workorder").list(altPrefix);
+                if (list2 && list2.length > 0) chosenPrefix = altPrefix;
+            }
+        } catch (e) { /* silent fail */ }
+
+        // 2. Start Fetching Photos and Signatures in PARALLEL
+        const photosPromise = fetchAllPhotos(order, chosenPrefix);
+
+        const getSignatureParallel = async (type) => {
+            const candidates = type === "jagarti"
+                ? [`${chosenPrefix}/tanda1.png`, `${chosenPrefix}/tanda_tangan1.png`, `${chosenPrefix}/tangan.png`, `${chosenPrefix}/tanda1.jpg`]
+                : [`${chosenPrefix}/tanda2.png`, `${chosenPrefix}/tanda_tangan2.png`, `${chosenPrefix}/tanda2.jpg`];
+
+            for (const path of candidates) {
+                const base64 = await fetchImageAsBase64(path);
+                if (base64) return base64;
+            }
+
+            // Fallback to DB Fields
+            const dbField = type === "jagarti" ? (order.tanda_tangan1 || order.tanda_tangan) : order.tanda_tangan2;
+            if (dbField) {
+                try {
+                    const res = await fetch(dbField);
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        return await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                } catch (e) { }
+            }
+            return null;
+        };
+
+        const jagartiSigPromise = getSignatureParallel("jagarti");
+        const customerSigPromise = getSignatureParallel("customer");
+
+        // Await Logo locally just before use (it might already be cached or fetching)
+        const logoBase64 = await logoBase64Promise;
 
         // ===== WATERMARK BESAR (TENGAH) =====
         if (logoBase64) {
@@ -264,51 +330,9 @@ export async function generateBA(order) {
         const signLeftX = penyX;
         const signRightX = signLeftX + signW + signGap;
 
-        // 1. Detect Prefix
-        let chosenPrefix = `${order.no_spk}`;
-        try {
-            const { data: list1 } = await supabase.storage.from("workorder").list(chosenPrefix);
-            if (!list1 || list1.length === 0) {
-                const altPrefix = `workorder/${order.no_spk}`;
-                const { data: list2 } = await supabase.storage.from("workorder").list(altPrefix);
-                if (list2 && list2.length > 0) chosenPrefix = altPrefix;
-            }
-        } catch (e) { console.debug("Prefix detection failed:", e); }
+        // --- WAIT FOR SIGNATURES HERE ---
+        const [jagartiBase64, customerBase64] = await Promise.all([jagartiSigPromise, customerSigPromise]);
 
-        // 2. Fetch Base64 with Candidates
-        const getSignatureBase64 = async (type) => {
-            const candidates = type === "jagarti"
-                ? [`${chosenPrefix}/tanda1.png`, `${chosenPrefix}/tanda_tangan1.png`, `${chosenPrefix}/tangan.png`, `${chosenPrefix}/tanda1.jpg`]
-                : [`${chosenPrefix}/tanda2.png`, `${chosenPrefix}/tanda_tangan2.png`, `${chosenPrefix}/tanda2.jpg`];
-
-            for (const path of candidates) {
-                const base64 = await fetchImageAsBase64(path);
-                if (base64) return base64;
-            }
-
-            // Fallback to DB Fields
-            const dbField = type === "jagarti"
-                ? (order.tanda_tangan1 || order.tanda_tangan)
-                : order.tanda_tangan2;
-
-            if (dbField) {
-                try {
-                    const res = await fetch(dbField);
-                    if (res.ok) {
-                        const blob = await res.blob();
-                        return await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.readAsDataURL(blob);
-                        });
-                    }
-                } catch (e) { console.warn(`Fallback DB field fetch failed for ${type}:`, e); }
-            }
-            return null;
-        };
-
-        const jagartiBase64 = await getSignatureBase64("jagarti");
-        const customerBase64 = await getSignatureBase64("customer");
 
         // --- Kotak Pelanggan ---
         doc.rect(signLeftX, signY, signW, signH);
@@ -336,7 +360,9 @@ export async function generateBA(order) {
                 const imgX = signLeftX + (signW - imgWidth) / 2;
                 const imgY = signY + (signH - imgHeight) / 2;
                 doc.addImage(customerBase64, "PNG", imgX, imgY, imgWidth, imgHeight);
-            } catch (e) { console.warn("❌ Gagal render ttd pelanggan:", e); }
+            } catch (e) {
+                console.warn("❌ Gagal render ttd pelanggan:", e);
+            }
         }
 
         // --- Kotak PT JAGARTI ---
@@ -365,10 +391,21 @@ export async function generateBA(order) {
                 const imgX = signRightX + (signW - imgWidth) / 2;
                 const imgY = signY + (signH - imgHeight) / 2;
                 doc.addImage(jagartiBase64, "PNG", imgX, imgY, imgWidth, imgHeight);
-            } catch (e) { console.warn("❌ Gagal render ttd JAGARTI:", e); }
+            } catch (e) {
+                console.warn("❌ Gagal render ttd JAGARTI:", e);
+            }
         }
 
         // ===== HALAMAN FOTO (2-3) =====
+
+        // --- WAIT FOR PHOTOS HERE ---
+        // result is array of { idx, base64 } or failed items
+        const rawPhotos = await photosPromise;
+        const photosMap = {};
+        rawPhotos.forEach(p => {
+            if (p && p.base64) photosMap[p.idx] = p.base64;
+        });
+
         for (let page = 2; page <= 3; page++) {
             doc.addPage({ orientation: "landscape", unit: "mm", format: "a4" });
 
@@ -394,8 +431,7 @@ export async function generateBA(order) {
                 doc.setFontSize(10);
                 doc.text(`FOTO ${i}`, imgX + 2, imgY);
 
-                const path = `workorder/${order.no_spk}/foto${i}.jpg`;
-                const base64 = await fetchImageAsBase64(path);
+                const base64 = photosMap[i];
 
                 doc.setDrawColor(0);
                 doc.rect(imgX, imgY + 4, imgW, imgH);
@@ -423,21 +459,12 @@ export async function generateBA(order) {
             }
         }
 
-        // ===== UPLOAD =====
+        // ===== DISPLAY ON-DEMAND (NO UPLOAD) =====
         const pdfBlob = doc.output("blob");
-        const arrayBuffer = await pdfBlob.arrayBuffer();
-        const pdfFile = new File([arrayBuffer], `${order.no_spk}.pdf`, { type: "application/pdf" });
-        const filePath = `ba/${order.no_spk}.pdf`;
+        const blobUrl = URL.createObjectURL(pdfBlob);
 
-        const { error: uploadErr } = await supabase.storage.from("workorder").upload(filePath, pdfFile, { upsert: true });
+        return { ok: true, url: blobUrl };
 
-        if (uploadErr) return { ok: false, error: uploadErr };
-
-        const apiLink = `https://jstmonitoring.netlify.app/.netlify/functions/file?path=${filePath}`;
-        const { error: updateErr } = await supabase.from("cctv").update({ link_ba: apiLink }).eq("id", order.id);
-        if (updateErr) return { ok: false, error: updateErr };
-
-        return { ok: true, url: apiLink };
     } catch (err) {
         console.error("generateBA error:", err);
         return { ok: false, error: err };

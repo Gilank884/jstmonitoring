@@ -25,18 +25,18 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedAuth = sessionStorage.getItem("isAuthenticated");
+    const storedAuth = localStorage.getItem("isAuthenticated");
     setIsAuthenticated(storedAuth === "true");
     setLoading(false);
   }, []);
 
   const handleLogin = () => {
-    sessionStorage.setItem("isAuthenticated", "true");
+    localStorage.setItem("isAuthenticated", "true");
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    sessionStorage.removeItem("isAuthenticated");
+    localStorage.removeItem("isAuthenticated");
     setIsAuthenticated(false);
   };
 
