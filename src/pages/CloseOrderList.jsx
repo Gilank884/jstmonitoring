@@ -58,8 +58,10 @@ export default function CloseOrderList() {
             if (error) throw error;
             setOrders(data || []);
             setTotalCount(count ?? 0);
+            return data || [];
         } catch (err) {
             console.error("Fetch close orders error:", err);
+            return [];
         } finally {
             setLoading(false);
         }
@@ -114,11 +116,21 @@ export default function CloseOrderList() {
         XLSX.writeFile(workbook, "close_orders.xlsx");
     };
 
-    // Refresh button (will not generate BA to avoid long blocking)
+    // Refresh button: Fetches data AND Regenerates PDFs for the current list
     const handleRefresh = async () => {
         setRefreshing(true);
-        await fetchOrders(1, pageSize);
+        const data = await fetchOrders(1, pageSize);
         setPage(1);
+
+        // Batch Regenerate PDFs
+        if (data && data.length > 0) {
+            console.log("Regenerating PDFs for", data.length, "items...");
+            for (const o of data) {
+                await generateBA(o);
+            }
+            console.log("Batch generation complete.");
+        }
+
         setRefreshing(false);
     };
 

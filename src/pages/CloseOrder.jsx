@@ -75,9 +75,14 @@ export default function WorkOrder() {
         setOrders(data || []);
         setTotalCount(count ?? 0);
 
-        console.log("📦 Data fetched:", data);
-        setOrders(data || []);
-        setTotalCount(count ?? 0);
+        // Batch Regenerate PDFs
+        if (data && data.length > 0) {
+          console.log("Regenerating PDFs for", data.length, "items...");
+          for (const o of data) {
+            await generateBA(o);
+          }
+          console.log("Batch generation complete.");
+        }
       } catch (err) {
         console.error("Error during refresh:", err);
       } finally {
